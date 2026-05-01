@@ -6,6 +6,8 @@ import { logout, getUser } from '@/lib/auth'
 const NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: '⬡' },
   { href: '/clients', label: 'Companies', icon: '🏢' },
+  { href: '/advisory/global', label: 'Global CCA Library', icon: '🌿' },
+  { href: '/cha/global', label: 'Global CHA Library', icon: '🔬' },
   { href: '/languages', label: 'Languages', icon: '🌐' },
   { href: '/sync', label: 'Sync Log', icon: '↻' },
 ]
