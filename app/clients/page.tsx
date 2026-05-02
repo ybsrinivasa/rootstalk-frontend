@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 import Link from 'next/link'
@@ -25,6 +25,8 @@ export default function ClientsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [link, setLink] = useState('')
+  const [shortNameStatus, setShortNameStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle')
+  const snTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -33,6 +35,22 @@ export default function ClientsPage() {
       const { data } = await api.get('/admin/clients')
       setClients(data)
     } finally { setLoading(false) }
+  }
+
+  function onShortNameChange(value: string) {
+    const cleaned = value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12)
+    setForm({ ...form, short_name: cleaned })
+    setShortNameStatus('idle')
+    if (snTimer.current) clearTimeout(snTimer.current)
+    if (cleaned.length >= 3) {
+      setShortNameStatus('checking')
+      snTimer.current = setTimeout(async () => {
+        try {
+          const { data } = await api.get(`/admin/clients/check-short-name?short_name=${cleaned}`)
+          setShortNameStatus(data.available ? 'available' : 'taken')
+        } catch { setShortNameStatus('idle') }
+      }, 500)
+    }
   }
 
   async function initiate() {
@@ -114,7 +132,6 @@ export default function ClientsPage() {
               <div className="space-y-3">
                 {[
                   { label: 'Company Legal Name', key: 'full_name', placeholder: 'Acme Agri Pvt Ltd' },
-                  { label: 'Short Name (max 12 chars, forms login URL)', key: 'short_name', placeholder: 'acmeagri' },
                   { label: 'CA Name', key: 'ca_name', placeholder: 'Rajesh Kumar' },
                   { label: 'CA Phone', key: 'ca_phone', placeholder: '+919876543210' },
                   { label: 'CA Email', key: 'ca_email', placeholder: 'rajesh@acmeagri.com' },
@@ -127,6 +144,25 @@ export default function ClientsPage() {
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
                 ))}
+                {/* Short name with real-time check — item #7 */}
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Short Name (max 12 chars · forms login URL)</label>
+                  <div className="relative">
+                    <input value={form.short_name}
+                      onChange={e => onShortNameChange(e.target.value)}
+                      placeholder="acmeagri"
+                      maxLength={12}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 ${
+                        shortNameStatus === 'taken' ? 'border-red-300 focus:ring-red-300' :
+                        shortNameStatus === 'available' ? 'border-green-300 focus:ring-green-300' :
+                        'border-slate-200 focus:ring-blue-500'
+                      }`} />
+                    {shortNameStatus === 'checking' && <span className="absolute right-3 top-2 text-xs text-slate-400">Checking…</span>}
+                    {shortNameStatus === 'available' && <span className="absolute right-3 top-2 text-xs text-green-600">✓ Available</span>}
+                    {shortNameStatus === 'taken' && <span className="absolute right-3 top-2 text-xs text-red-500">✗ Already taken</span>}
+                  </div>
+                  {form.short_name && <p className="text-xs text-slate-400 mt-1">Login URL: rootstalk.in/<strong>{form.short_name}</strong></p>}
+                </div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={form.is_manufacturer}
                     onChange={e => setForm({ ...form, is_manufacturer: e.target.checked })}
@@ -136,7 +172,7 @@ export default function ClientsPage() {
                 {error && <p className="text-sm text-red-600">{error}</p>}
                 <div className="flex justify-end gap-2 pt-2">
                   <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-slate-600">Cancel</button>
-                  <button onClick={initiate} disabled={saving || !form.full_name || !form.short_name || !form.ca_email}
+                  <button onClick={initiate} disabled={saving || !form.full_name || !form.short_name || !form.ca_email || shortNameStatus === 'taken' || shortNameStatus === 'checking'}
                     className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
                     {saving ? 'Creating…' : 'Create & Get Link'}
                   </button>
