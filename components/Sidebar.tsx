@@ -11,6 +11,7 @@ const NAV = [
   { href: '/languages', label: 'Languages', icon: '🌐' },
   { href: '/sync', label: 'Sync Log', icon: '↻' },
   { href: '/users', label: 'Team Users', icon: '👥' },
+  { href: '/change-password', label: 'Change Password', icon: '🔑' },
   { href: '/rm', label: 'RM Support Desk', icon: '🎧' },
   { href: '/my-clients', label: 'My Clients', icon: '🏢' },
   { href: '/crop-health-crops', label: 'Crop Health', icon: '🌿' },
