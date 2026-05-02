@@ -3,25 +3,30 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { logout, getUser } from '@/lib/auth'
 
-const NAV = [
-  { href: '/dashboard', label: 'Dashboard', icon: '⬡' },
-  { href: '/clients', label: 'Companies', icon: '🏢' },
-  { href: '/advisory/global', label: 'Global CCA Library', icon: '🌿' },
-  { href: '/cha/global', label: 'Global CHA Library', icon: '🔬' },
-  { href: '/languages', label: 'Languages', icon: '🌐' },
-  { href: '/sync', label: 'Sync Log', icon: '↻' },
-  { href: '/users', label: 'Team Users', icon: '👥' },
-  { href: '/change-password', label: 'Change Password', icon: '🔑' },
-  { href: '/rm', label: 'RM Support Desk', icon: '🎧' },
-  { href: '/my-clients', label: 'My Clients', icon: '🏢' },
-  { href: '/crop-health-crops', label: 'Crop Health', icon: '🌿' },
-  { href: '/brand-handling', label: 'Brand Handling', icon: '🏷️' },
-  { href: '/volume-calculations', label: 'Volume Formulas', icon: '⚗️' },
+const ALL_NAV = [
+  { href: '/dashboard', label: 'Dashboard', icon: '⬡', roles: ['SA', 'CM', 'RM'] },
+  { href: '/clients', label: 'Companies', icon: '🏢', roles: ['SA', 'RM'] },
+  { href: '/advisory/global', label: 'Global CCA Library', icon: '🌿', roles: ['SA', 'CM'] },
+  { href: '/cha/global', label: 'Global CHA Library', icon: '🔬', roles: ['SA', 'CM'] },
+  { href: '/languages', label: 'Languages', icon: '🌐', roles: ['SA'] },
+  { href: '/sync', label: 'Sync Log', icon: '↻', roles: ['SA'] },
+  { href: '/users', label: 'Team Users', icon: '👥', roles: ['SA'] },
+  { href: '/rm', label: 'RM Support Desk', icon: '🎧', roles: ['SA', 'RM'] },
+  { href: '/my-clients', label: 'My Clients', icon: '🏢', roles: ['CM'] },
+  { href: '/crop-health-crops', label: 'Crop Health', icon: '🌿', roles: ['SA', 'CM'] },
+  { href: '/brand-handling', label: 'Brand Handling', icon: '🏷️', roles: ['SA', 'CM'] },
+  { href: '/volume-calculations', label: 'Volume Formulas', icon: '⚗️', roles: ['SA', 'CM'] },
+  { href: '/change-password', label: 'Change Password', icon: '🔑', roles: ['SA', 'CM', 'RM'] },
 ]
 
 export default function Sidebar() {
   const path = usePathname()
   const user = getUser()
+
+  // SA has no role entries in the roles array
+  const userRoles = user?.roles?.map(r => r.role_type) || []
+  const effectiveRole = userRoles.length === 0 ? 'SA' : userRoles[0]
+  const NAV = ALL_NAV.filter(item => item.roles.includes(effectiveRole))
 
   return (
     <aside className="w-56 flex-shrink-0 flex flex-col min-h-screen"
