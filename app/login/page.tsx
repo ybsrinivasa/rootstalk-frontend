@@ -27,7 +27,6 @@ export default function LoginPage() {
     if (getToken()) router.replace('/dashboard')
   }, [router])
 
-  // ── Password login ────────────────────────────────────────────────────────────
   async function handlePasswordLogin(e: FormEvent) {
     e.preventDefault()
     setError(''); setLoading(true)
@@ -37,7 +36,6 @@ export default function LoginPage() {
     } catch { setError('Invalid email or password') } finally { setLoading(false) }
   }
 
-  // ── OTP login ─────────────────────────────────────────────────────────────────
   async function requestOtp(e: FormEvent) {
     e.preventDefault()
     setError(''); setLoading(true)
@@ -63,7 +61,6 @@ export default function LoginPage() {
     } catch { setError('Invalid or expired code') } finally { setLoading(false) }
   }
 
-  // ── Forgot password ───────────────────────────────────────────────────────────
   async function sendForgotOtp(e: FormEvent) {
     e.preventDefault()
     setError(''); setLoading(true)
@@ -87,6 +84,8 @@ export default function LoginPage() {
     } finally { setLoading(false) }
   }
 
+  const inputCls = 'w-full border border-stone-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-stone-900 placeholder-stone-400'
+
   const PortalBrand = () => (
     <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12"
       style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)' }}>
@@ -105,11 +104,11 @@ export default function LoginPage() {
               <line x1="12" y1="12" x2="20" y2="18" stroke="#60a5fa" strokeWidth="1" opacity="0.5"/>
             </svg>
           </div>
-          <span className="text-blue-400 text-xs font-medium tracking-widest uppercase opacity-80">Neytiri Eywafarm Agritech</span>
+          <span className="text-blue-300 text-xs font-medium tracking-widest uppercase">Neytiri Eywafarm Agritech</span>
         </div>
         <h1 className="text-5xl font-bold text-white leading-tight">RootsTalk</h1>
-        <p className="text-blue-300 text-lg mt-2 font-light">Eywa Admin Portal</p>
-        <p className="text-slate-400 text-sm mt-1">Internal operations — Neytiri team only</p>
+        <p className="text-blue-300 text-sm font-medium tracking-widest uppercase mt-3">Eywa Admin Portal</p>
+        <p className="text-slate-400 text-sm mt-2">Internal operations — Neytiri team only</p>
       </div>
       <p className="text-slate-500 text-sm">Manage companies, sync data, configure the platform.</p>
     </div>
@@ -119,20 +118,20 @@ export default function LoginPage() {
     return (
       <div className="min-h-screen flex">
         <PortalBrand />
-        <div className="flex-1 flex items-center justify-center bg-white px-8 py-12">
+        <div className="flex-1 flex items-center justify-center bg-[#F7F5F0] px-8 py-12">
           <div className="w-full max-w-sm">
             <div className="mb-8">
-              <h2 className="text-2xl font-bold text-slate-900">Reset password</h2>
-              <p className="text-slate-500 text-sm mt-1">We'll send a one-time code to your email</p>
+              <h2 className="text-2xl font-bold text-stone-900">Reset password</h2>
+              <p className="text-stone-500 text-sm mt-1">We&apos;ll send a one-time code to your email</p>
             </div>
             {forgotStage === 'email' && (
               <form onSubmit={sendForgotOtp} className="space-y-4">
                 <input type="email" value={forgotEmail} onChange={e => setForgotEmail(e.target.value)}
                   required autoFocus placeholder="your@email.com"
-                  className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">⚠ {error}</p>}
+                  className={inputCls} />
+                {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{error}</div>}
                 <button type="submit" disabled={loading}
-                  className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-60"
+                  className="w-full py-3 rounded-lg text-white font-semibold text-sm tracking-wide disabled:opacity-60"
                   style={{ background: 'linear-gradient(135deg, #1e3a5f, #3b82f6)' }}>
                   {loading ? 'Sending…' : 'Send reset code'}
                 </button>
@@ -140,16 +139,16 @@ export default function LoginPage() {
             )}
             {forgotStage === 'otp' && (
               <form onSubmit={resetPassword} className="space-y-4">
-                {info && <p className="text-sm text-green-700 bg-green-50 rounded-xl px-4 py-2">{info}</p>}
+                {info && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-2">{info}</div>}
                 <input value={forgotOtp} onChange={e => setForgotOtp(e.target.value)}
                   required maxLength={6} placeholder="6-digit code"
-                  className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  className={`${inputCls} font-mono tracking-widest text-center`} />
                 <input type="password" value={forgotNew} onChange={e => setForgotNew(e.target.value)}
                   required placeholder="New password (min 8 chars)"
-                  className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">⚠ {error}</p>}
+                  className={inputCls} />
+                {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{error}</div>}
                 <button type="submit" disabled={loading}
-                  className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-60"
+                  className="w-full py-3 rounded-lg text-white font-semibold text-sm tracking-wide disabled:opacity-60"
                   style={{ background: 'linear-gradient(135deg, #1e3a5f, #3b82f6)' }}>
                   {loading ? 'Resetting…' : 'Set new password'}
                 </button>
@@ -157,7 +156,11 @@ export default function LoginPage() {
             )}
             {forgotStage === 'done' && (
               <div className="text-center">
-                <p className="text-3xl mb-4">✓</p>
+                <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
                 <p className="text-green-700 font-semibold">{info}</p>
               </div>
             )}
@@ -174,21 +177,21 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex">
       <PortalBrand />
-      <div className="flex-1 flex items-center justify-center bg-white px-8 py-12">
+      <div className="flex-1 flex items-center justify-center bg-[#F7F5F0] px-8 py-12">
         <div className="w-full max-w-sm">
           <div className="mb-7">
-            <h2 className="text-2xl font-bold text-slate-900">Sign in</h2>
-            <p className="text-slate-500 text-sm mt-1">Admin Portal access</p>
+            <h2 className="text-2xl font-bold text-stone-900">Sign in</h2>
+            <p className="text-stone-500 text-sm mt-1">Admin Portal access</p>
           </div>
 
           {/* Method toggle */}
-          <div className="flex bg-slate-100 rounded-xl p-1 mb-6">
+          <div className="flex bg-stone-200 rounded-lg p-1 mb-6">
             <button onClick={() => { setMethod('password'); setError(''); setInfo('') }}
-              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${method === 'password' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500'}`}>
+              className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${method === 'password' ? 'bg-white shadow-sm text-stone-800' : 'text-stone-500'}`}>
               Password
             </button>
             <button onClick={() => { setMethod('otp'); setError(''); setInfo(''); setOtpStage('request') }}
-              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${method === 'otp' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500'}`}>
+              className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${method === 'otp' ? 'bg-white shadow-sm text-stone-800' : 'text-stone-500'}`}>
               Email OTP
             </button>
           </div>
@@ -198,18 +201,18 @@ export default function LoginPage() {
             <form onSubmit={handlePasswordLogin} className="space-y-4">
               <input type="email" value={email} onChange={e => setEmail(e.target.value)}
                 required autoFocus placeholder="your@email.com"
-                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                className={inputCls} />
               <input type="password" value={password} onChange={e => setPassword(e.target.value)}
                 required placeholder="Password"
-                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">⚠ {error}</p>}
+                className={inputCls} />
+              {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{error}</div>}
               <button type="submit" disabled={loading}
-                className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-60"
+                className="w-full py-3 rounded-lg text-white font-semibold text-sm tracking-wide disabled:opacity-60"
                 style={{ background: 'linear-gradient(135deg, #1e3a5f, #3b82f6)' }}>
                 {loading ? 'Signing in…' : 'Sign in'}
               </button>
               <button type="button" onClick={() => setForgotMode(true)}
-                className="w-full text-sm text-blue-600 hover:underline text-center mt-1">
+                className="w-full text-sm text-stone-500 hover:text-stone-700 text-center mt-1">
                 Forgot password?
               </button>
             </form>
@@ -220,10 +223,10 @@ export default function LoginPage() {
             <form onSubmit={requestOtp} className="space-y-4">
               <input type="email" value={email} onChange={e => setEmail(e.target.value)}
                 required autoFocus placeholder="your@email.com"
-                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">⚠ {error}</p>}
+                className={inputCls} />
+              {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{error}</div>}
               <button type="submit" disabled={loading}
-                className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-60"
+                className="w-full py-3 rounded-lg text-white font-semibold text-sm tracking-wide disabled:opacity-60"
                 style={{ background: 'linear-gradient(135deg, #1e3a5f, #3b82f6)' }}>
                 {loading ? 'Sending…' : 'Send OTP to my email'}
               </button>
@@ -232,24 +235,24 @@ export default function LoginPage() {
 
           {method === 'otp' && otpStage === 'verify' && (
             <form onSubmit={verifyOtp} className="space-y-4">
-              {info && <p className="text-sm text-green-700 bg-green-50 rounded-xl px-4 py-2">{info}</p>}
+              {info && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-2">{info}</div>}
               <input value={otpCode} onChange={e => setOtpCode(e.target.value)}
                 required maxLength={6} autoFocus placeholder="6-digit code"
-                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">⚠ {error}</p>}
+                className={`${inputCls} font-mono text-center tracking-widest`} />
+              {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{error}</div>}
               <button type="submit" disabled={loading}
-                className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-60"
+                className="w-full py-3 rounded-lg text-white font-semibold text-sm tracking-wide disabled:opacity-60"
                 style={{ background: 'linear-gradient(135deg, #1e3a5f, #3b82f6)' }}>
                 {loading ? 'Verifying…' : 'Verify & Sign in'}
               </button>
               <button type="button" onClick={() => { setOtpStage('request'); setOtpCode(''); setError(''); setInfo('') }}
-                className="w-full text-sm text-slate-400 hover:text-slate-600">
+                className="w-full text-sm text-stone-400 hover:text-stone-600">
                 ← Send new code
               </button>
             </form>
           )}
 
-          <p className="text-center text-xs text-slate-300 mt-10">Neytiri Eywafarm Agritech Pvt Ltd</p>
+          <p className="text-center text-xs text-stone-400 mt-10">Neytiri Eywafarm Agritech Pvt Ltd</p>
         </div>
       </div>
     </div>
