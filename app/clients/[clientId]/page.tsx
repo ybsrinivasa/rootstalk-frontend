@@ -42,14 +42,45 @@ export default function ClientDetailPage() {
   const [saving, setSaving] = useState(false)
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const logoRef = useRef<HTMLInputElement>(null)
+  // CM assignment
+  const [cmAssignment, setCmAssignment] = useState<{ cm_user_id: string | null; cm_name: string | null; cm_email: string | null; rights: string | null } | null>(null)
+  const [allCMs, setAllCMs] = useState<{ id: string; name: string | null; email: string | null }[]>([])
+  const [showCMAssign, setShowCMAssign] = useState(false)
+  const [cmForm, setCmForm] = useState({ cm_user_id: '', rights: 'EDIT' })
+  const [savingCM, setSavingCM] = useState(false)
 
   useEffect(() => { load() }, [clientId])
 
   async function load() {
     try {
-      const { data } = await api.get(`/admin/clients/${clientId}`)
-      setClient(data)
+      const [clientRes, cmRes, usersRes] = await Promise.allSettled([
+        api.get(`/admin/clients/${clientId}`),
+        api.get(`/admin/clients/${clientId}/cm-assignment`),
+        api.get('/admin/users'),
+      ])
+      if (clientRes.status === 'fulfilled') setClient(clientRes.value.data)
+      if (cmRes.status === 'fulfilled') setCmAssignment(cmRes.value.data)
+      if (usersRes.status === 'fulfilled') {
+        const cms = (usersRes.value.data as { id: string; name: string | null; email: string | null; roles: string[] }[])
+          .filter(u => u.roles.includes('CONTENT_MANAGER'))
+        setAllCMs(cms)
+      }
     } finally { setLoading(false) }
+  }
+
+  async function saveCMAssignment() {
+    setSavingCM(true)
+    try {
+      await api.put(`/admin/clients/${clientId}/cm-assignment`, cmForm)
+      setShowCMAssign(false)
+      load()
+    } finally { setSavingCM(false) }
+  }
+
+  async function removeCMAssignment() {
+    if (!confirm('Remove CM from this client?')) return
+    await api.delete(`/admin/clients/${clientId}/cm-assignment`)
+    load()
   }
 
   function openEdit() {
@@ -228,6 +259,50 @@ export default function ClientDetailPage() {
           }
         </div>
       </div>
+
+      {/* CM Assignment section */}
+      {client.status === 'ACTIVE' && (
+        <div className="bg-white border border-slate-200 rounded-xl p-5 mb-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Assigned Content Manager</p>
+            {cmAssignment?.cm_user_id ? (
+              <div className="flex gap-2">
+                <button onClick={() => { setCmForm({ cm_user_id: cmAssignment.cm_user_id!, rights: cmAssignment.rights || 'EDIT' }); setShowCMAssign(true) }}
+                  className="text-xs px-3 py-1 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">
+                  Change
+                </button>
+                <button onClick={removeCMAssignment}
+                  className="text-xs px-3 py-1 border border-red-200 rounded-lg text-red-500 hover:bg-red-50">
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => { setCmForm({ cm_user_id: '', rights: 'EDIT' }); setShowCMAssign(true) }}
+                className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
+                + Assign CM
+              </button>
+            )}
+          </div>
+          {cmAssignment?.cm_user_id ? (
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-sm">
+                {(cmAssignment.cm_name || 'C')[0]}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-800">{cmAssignment.cm_name || '—'}</p>
+                <p className="text-xs text-slate-400">{cmAssignment.cm_email}</p>
+              </div>
+              <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${
+                cmAssignment.rights === 'EDIT' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
+              }`}>
+                {cmAssignment.rights === 'EDIT' ? 'Edit rights' : 'View only'}
+              </span>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-400 italic">No CM assigned. Content for this client is unmanaged.</p>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex gap-3 flex-wrap">
@@ -419,6 +494,54 @@ export default function ClientDetailPage() {
               <button onClick={saveEdit} disabled={saving}
                 className="px-5 py-2.5 rounded-xl bg-green-700 text-white text-sm font-semibold hover:bg-green-800 disabled:opacity-40">
                 {saving ? 'Saving…' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CM assignment modal */}
+      {showCMAssign && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl">
+            <h2 className="text-lg font-bold text-slate-900 mb-4">Assign Content Manager</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Content Manager</label>
+                <select value={cmForm.cm_user_id}
+                  onChange={e => setCmForm(f => ({ ...f, cm_user_id: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none">
+                  <option value="">Select a CM…</option>
+                  {allCMs.map(cm => (
+                    <option key={cm.id} value={cm.id}>{cm.name || 'Unnamed'} ({cm.email})</option>
+                  ))}
+                </select>
+                {allCMs.length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1">No Content Managers created yet. Add CMs in Team Users first.</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Access Rights</label>
+                <div className="flex gap-2">
+                  {(['EDIT', 'VIEW'] as const).map(r => (
+                    <button key={r} onClick={() => setCmForm(f => ({ ...f, rights: r }))}
+                      className={`flex-1 py-2 text-sm font-medium rounded-xl border-2 transition-all ${
+                        cmForm.rights === r ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'
+                      }`}>
+                      {r === 'EDIT' ? 'Edit (default)' : 'View Only'}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  {cmForm.rights === 'EDIT' ? 'CM can view and edit advisory content for this client' : 'CM can view but cannot make changes'}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setShowCMAssign(false)} className="px-4 py-2 text-sm text-slate-600">Cancel</button>
+              <button onClick={saveCMAssignment} disabled={!cmForm.cm_user_id || savingCM}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                {savingCM ? 'Saving…' : 'Assign CM'}
               </button>
             </div>
           </div>

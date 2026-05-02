@@ -11,6 +11,10 @@ const NAV = [
   { href: '/languages', label: 'Languages', icon: '🌐' },
   { href: '/sync', label: 'Sync Log', icon: '↻' },
   { href: '/users', label: 'Team Users', icon: '👥' },
+  { href: '/my-clients', label: 'My Clients', icon: '🏢' },
+  { href: '/crop-health-crops', label: 'Crop Health', icon: '🌿' },
+  { href: '/brand-handling', label: 'Brand Handling', icon: '🏷️' },
+  { href: '/volume-calculations', label: 'Volume Formulas', icon: '⚗️' },
 ]
 
 export default function Sidebar() {
