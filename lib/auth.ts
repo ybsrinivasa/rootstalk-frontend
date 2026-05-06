@@ -5,6 +5,7 @@ export interface AdminUser {
   email: string
   name: string | null
   roles: { role_type: string; status: string }[]
+  is_sa?: boolean
 }
 
 export async function adminLogin(email: string, password: string): Promise<void> {

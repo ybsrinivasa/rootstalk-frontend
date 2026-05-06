@@ -129,12 +129,30 @@ function GroupLabel({ label }: { label: string }) {
   )
 }
 
+// Backend returns full role names (CONTENT_MANAGER, RELATIONSHIP_MANAGER,
+// BUSINESS_MANAGER); the menu's role tags use short codes. Map them so
+// effectiveRole lines up with the ALL_NAV `roles` arrays.
+const ROLE_CODE: Record<string, string> = {
+  CONTENT_MANAGER: 'CM',
+  RELATIONSHIP_MANAGER: 'RM',
+  BUSINESS_MANAGER: 'BM',
+}
+
 export default function Sidebar() {
   const path = usePathname()
   const user = getUser()
 
+  // SA-ness comes from `email == settings.sa_email` on the backend, not from
+  // the roles list. The /auth/me payload now ships an explicit is_sa flag —
+  // use that first. Fallback to first role mapped through ROLE_CODE.
+  // Empty/unknown defaults to 'SA' (preserves the pre-fix forgiving behaviour
+  // — better to over-show menu items than to lock the user out).
   const userRoles = user?.roles?.map((r: { role_type: string }) => r.role_type) || []
-  const effectiveRole = userRoles.length === 0 ? 'SA' : userRoles[0]
+  const effectiveRole = user?.is_sa
+    ? 'SA'
+    : userRoles.length === 0
+      ? 'SA'
+      : (ROLE_CODE[userRoles[0]] || userRoles[0])
 
   const filteredNav = ALL_NAV.filter(item => item.roles.includes(effectiveRole))
 
