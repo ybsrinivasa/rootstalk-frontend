@@ -6,6 +6,8 @@ import api from '@/lib/api'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
+type PaymentModel = 'COMPANY_PAYS' | 'FARMER_PAYS'
+
 type Client = {
   id: string; full_name: string; short_name: string; display_name: string | null
   ca_name: string; ca_email: string; ca_phone: string; status: string
@@ -13,6 +15,7 @@ type Client = {
   pan_number: string | null; primary_colour: string | null; secondary_colour: string | null
   tagline: string | null; logo_url: string | null; website: string | null
   support_phone: string | null; office_phone: string | null; social_links: Record<string, string> | null
+  payment_model: PaymentModel
   rejection_reason: string | null; approved_at: string | null; created_at: string
   /** Backend-computed env-driven login URL — built from FRONTEND_BASE_URL.
    *  Replaced the previously hardcoded `https://rootstalk.in/<short_name>`
@@ -97,6 +100,7 @@ export default function ClientDetailPage() {
       ca_phone: client.ca_phone,
       ca_email: client.ca_email,
       is_manufacturer: client.is_manufacturer,
+      payment_model: client.payment_model,
       logo_url: client.logo_url || '',
       primary_colour: client.primary_colour || '',
       secondary_colour: client.secondary_colour || '',
@@ -207,6 +211,15 @@ export default function ClientDetailPage() {
           <Row label="CA Email" value={client.ca_email} />
           <Row label="CA Phone" value={client.ca_phone} />
           <Row label="Manufacturer" value={client.is_manufacturer ? 'Yes — QR module enabled' : 'No'} />
+          <Row label="Payment Model" value={
+            <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+              client.payment_model === 'COMPANY_PAYS'
+                ? 'bg-blue-100 text-blue-700'
+                : 'bg-emerald-100 text-emerald-700'
+            }`}>
+              {client.payment_model === 'COMPANY_PAYS' ? 'Company Pays' : 'Farmer Pays'}
+            </span>
+          } />
           <Row label="Registered" value={new Date(client.created_at).toLocaleDateString()} />
           {client.approved_at && <Row label="Approved" value={new Date(client.approved_at).toLocaleDateString()} />}
           {client.rejection_reason && (
@@ -466,6 +479,33 @@ export default function ClientDetailPage() {
                     className="w-4 h-4 rounded" />
                   <span className="text-sm text-slate-700">Is Manufacturer (enables QR Code module)</span>
                 </label>
+              </div>
+
+              {/* Payment Model — spec §11.1. Editable post-approval per
+                  KK feedback 2026-05-09. Backend `ClientEdit` schema
+                  has accepted Optional[PaymentModel] since the original
+                  payment_model batch; only the SA-portal UI was
+                  missing the affordance. */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-2">Payment Model</label>
+                <div className="flex gap-2">
+                  {(['COMPANY_PAYS', 'FARMER_PAYS'] as const).map(pm => (
+                    <button key={pm} type="button"
+                      onClick={() => setEditForm(f => ({ ...f, payment_model: pm }))}
+                      className={`flex-1 py-2 text-sm font-medium rounded-xl border-2 transition-all ${
+                        editForm.payment_model === pm
+                          ? (pm === 'COMPANY_PAYS'
+                              ? 'border-blue-500 bg-blue-50 text-blue-700'
+                              : 'border-emerald-500 bg-emerald-50 text-emerald-700')
+                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}>
+                      {pm === 'COMPANY_PAYS' ? 'Company Pays' : 'Farmer Pays'}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Determines whether farmers self-subscribe (Farmer Pays) or only Promoter-assigned subscriptions are allowed (Company Pays).
+                </p>
               </div>
 
               <div>
