@@ -165,7 +165,12 @@ export default function ClientsPage() {
                     {shortNameStatus === 'available' && <span className="absolute right-3 top-2 text-xs text-green-600">✓ Available</span>}
                     {shortNameStatus === 'taken' && <span className="absolute right-3 top-2 text-xs text-red-500">✗ Already taken</span>}
                   </div>
-                  {form.short_name && <p className="text-xs text-slate-400 mt-1">Login URL: rootstalk.in/<strong>{form.short_name}</strong></p>}
+                  {form.short_name && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      Login URL path: <strong>/{form.short_name}</strong>
+                      {' '}<span className="text-slate-300">(host filled in after onboarding)</span>
+                    </p>
+                  )}
                 </div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={form.is_manufacturer}

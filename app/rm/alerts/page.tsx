@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
@@ -13,7 +13,19 @@ interface Alert {
   alert_receiver_name: string | null; alert_receiver_phone: string | null; alert_receiver_type: string | null
 }
 
+// Next.js 16 forbids useSearchParams() at the page-component level
+// during prerender. The hook has to live inside a Suspense boundary
+// so the prerender produces the fallback HTML and the client takes
+// over for the params-dependent UI.
 export default function AlertQueuePage() {
+  return (
+    <Suspense fallback={<AdminLayout><div className="py-20 text-center text-slate-400">Loading…</div></AdminLayout>}>
+      <AlertQueueContent />
+    </Suspense>
+  )
+}
+
+function AlertQueueContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [alerts, setAlerts] = useState<Alert[]>([])

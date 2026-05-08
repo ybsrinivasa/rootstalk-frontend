@@ -14,6 +14,10 @@ type Client = {
   tagline: string | null; logo_url: string | null; website: string | null
   support_phone: string | null; office_phone: string | null; social_links: Record<string, string> | null
   rejection_reason: string | null; approved_at: string | null; created_at: string
+  /** Backend-computed env-driven login URL — built from FRONTEND_BASE_URL.
+   *  Replaced the previously hardcoded `https://rootstalk.in/<short_name>`
+   *  which was wrong on testing (CA portal lives on rstalk-ca.eywa.farm). */
+  login_url: string | null
 }
 
 const ORG_TYPES = [
@@ -169,7 +173,9 @@ export default function ClientDetailPage() {
   if (!client) return <AdminLayout><div className="py-20 text-center text-red-500">Not found</div></AdminLayout>
 
   const hasCaData = !!client.display_name || !!client.hq_address
-  const loginUrl = `https://rootstalk.in/${client.short_name}`
+  // Backend computes login_url from FRONTEND_BASE_URL — single source of
+  // truth across testing/prod. No more hardcoded rootstalk.in here.
+  const loginUrl = client.login_url ?? ''
 
   return (
     <AdminLayout>
