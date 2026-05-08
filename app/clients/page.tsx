@@ -21,7 +21,11 @@ export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
-  const [form, setForm] = useState({ full_name: '', short_name: '', ca_name: '', ca_phone: '', ca_email: '', is_manufacturer: false })
+  const [form, setForm] = useState<{
+    full_name: string; short_name: string; ca_name: string;
+    ca_phone: string; ca_email: string; is_manufacturer: boolean;
+    payment_model: 'COMPANY_PAYS' | 'FARMER_PAYS' | '';
+  }>({ full_name: '', short_name: '', ca_name: '', ca_phone: '', ca_email: '', is_manufacturer: false, payment_model: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [link, setLink] = useState('')
@@ -169,10 +173,42 @@ export default function ClientsPage() {
                     className="w-4 h-4 accent-blue-600" />
                   <span className="text-sm text-slate-700">Is Manufacturer (enables QR module)</span>
                 </label>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Payment Model</label>
+                  <p className="text-xs text-slate-500 mb-2">
+                    How the company is set up to operate on RootsTalk (spec §11.1).
+                  </p>
+                  <label className="flex items-start gap-2 cursor-pointer mb-2">
+                    <input type="radio" name="payment_model" value="COMPANY_PAYS"
+                      checked={form.payment_model === 'COMPANY_PAYS'}
+                      onChange={() => setForm({ ...form, payment_model: 'COMPANY_PAYS' })}
+                      className="w-4 h-4 mt-0.5 accent-blue-600" />
+                    <div>
+                      <div className="text-sm text-slate-800 font-medium">Company Pays</div>
+                      <div className="text-xs text-slate-500">
+                        Farmers cannot self-subscribe. Only company-designated promoters
+                        can assign packages on behalf of the company.
+                      </div>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input type="radio" name="payment_model" value="FARMER_PAYS"
+                      checked={form.payment_model === 'FARMER_PAYS'}
+                      onChange={() => setForm({ ...form, payment_model: 'FARMER_PAYS' })}
+                      className="w-4 h-4 mt-0.5 accent-blue-600" />
+                    <div>
+                      <div className="text-sm text-slate-800 font-medium">Farmer Pays</div>
+                      <div className="text-xs text-slate-500">
+                        Farmers self-subscribe and pay directly. The company can also
+                        assign via promoters (consumes the pool).
+                      </div>
+                    </div>
+                  </label>
+                </div>
                 {error && <p className="text-sm text-red-600">{error}</p>}
                 <div className="flex justify-end gap-2 pt-2">
                   <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-slate-600">Cancel</button>
-                  <button onClick={initiate} disabled={saving || !form.full_name || !form.short_name || !form.ca_email || shortNameStatus === 'taken' || shortNameStatus === 'checking'}
+                  <button onClick={initiate} disabled={saving || !form.full_name || !form.short_name || !form.ca_email || !form.payment_model || shortNameStatus === 'taken' || shortNameStatus === 'checking'}
                     className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
                     {saving ? 'Creating…' : 'Create & Get Link'}
                   </button>
