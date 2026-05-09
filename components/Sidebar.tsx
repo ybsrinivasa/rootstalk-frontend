@@ -105,6 +105,7 @@ const ALL_NAV: NavItem[] = [
   { href: '/clients',              label: 'Companies',          Icon: IconBuilding,   roles: ['SA', 'RM'],        group: 'PLATFORM' },
   { href: '/languages',            label: 'Languages',          Icon: IconGlobe,      roles: ['SA'],              group: 'PLATFORM' },
   { href: '/sync',                 label: 'Sync Log',           Icon: IconRefresh,    roles: ['SA'],              group: 'PLATFORM' },
+  { href: '/cosh-crops',           label: 'Cosh Crops',         Icon: IconLeaf,       roles: ['SA', 'CM'],        group: 'PLATFORM' },
   // CONTENT
   { href: '/advisory/global',      label: 'Global CCA Library', Icon: IconBook,       roles: ['SA', 'CM'],        group: 'CONTENT' },
   { href: '/cha/global',           label: 'Global CHA Library', Icon: IconBeaker,     roles: ['SA', 'CM'],        group: 'CONTENT' },
