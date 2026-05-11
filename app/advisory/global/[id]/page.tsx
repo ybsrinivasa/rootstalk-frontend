@@ -51,7 +51,52 @@ const L0_COLOUR: Record<string, string> = {
   INPUT: 'bg-blue-100 text-blue-700', NON_INPUT: 'bg-purple-100 text-purple-700',
   INSTRUCTION: 'bg-amber-100 text-amber-700', MEDIA: 'bg-pink-100 text-pink-700',
 }
-const FROM_TYPES = ['DAS', 'DBS', 'CALENDAR']
+// Reference Type allowed values are package_type-conditional now —
+// the static FROM_TYPES list was a holdover from before:
+//   Annual    → DAS / DBS only
+//   Perennial → CALENDAR only
+const ALLOWED_FROM_TYPES_BY_PACKAGE_TYPE: Record<string, string[]> = {
+  ANNUAL: ['DAS', 'DBS'],
+  PERENNIAL: ['CALENDAR'],
+}
+
+// Calendar plumbing — store as day-of-year (1..365) in from_value /
+// to_value; surface month + day pickers in the modal. Non-leap-year
+// month start offsets:
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+const MONTH_OFFSETS = MONTH_DAYS.reduce<number[]>((acc, d, i) => {
+  acc.push(i === 0 ? 0 : acc[i - 1] + MONTH_DAYS[i - 1])
+  return acc
+}, [])
+
+function dayOfYear(month: number, day: number): number {
+  // month is 1..12, day is 1..MONTH_DAYS[month-1]
+  return MONTH_OFFSETS[month - 1] + day
+}
+
+function doyToMonthDay(doy: number): { month: number; day: number } {
+  if (doy < 1) return { month: 1, day: 1 }
+  if (doy > 365) return { month: 12, day: 31 }
+  let m = 0
+  while (m < 11 && MONTH_OFFSETS[m + 1] < doy) m++
+  return { month: m + 1, day: doy - MONTH_OFFSETS[m] }
+}
+
+function shortMonthDay(doy: number): string {
+  const { month, day } = doyToMonthDay(doy)
+  return `${MONTH_NAMES[month - 1].slice(0, 3)} ${day}`
+}
+
+function formatTimelineRange(tl: { from_type: string; from_value: number; to_value: number }): string {
+  if (tl.from_type === 'CALENDAR') {
+    return `${shortMonthDay(tl.from_value)} → ${shortMonthDay(tl.to_value)}`
+  }
+  return `Day ${tl.from_value} → ${tl.to_value}`
+}
 
 export default function GlobalPackageDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -66,7 +111,12 @@ export default function GlobalPackageDetailPage() {
   const [showAddTL, setShowAddTL] = useState(false)
   const [addingTL, setAddingTL] = useState(false)
   const [tlError, setTlError] = useState('')
-  const [tlForm, setTlForm] = useState({ name: '', from_type: 'DAS', from_value: '1', to_value: '30' })
+  const [tlForm, setTlForm] = useState({
+    name: '', from_type: 'DAS', from_value: '1', to_value: '30',
+    // Calendar-only — drive month/day pickers; serialised to
+    // from_value/to_value (day-of-year) on submit.
+    from_month: '1', from_day: '1', to_month: '12', to_day: '31',
+  })
 
   const [showAddPractice, setShowAddPractice] = useState<string | null>(null)
   const [addingPractice, setAddingPractice] = useState(false)
@@ -132,16 +182,58 @@ export default function GlobalPackageDetailPage() {
     } finally { setPublishing(false) }
   }
 
+  function openAddTimeline() {
+    if (!pkg) return
+    const isPerennial = pkg.package_type === 'PERENNIAL'
+    setTlForm({
+      name: '',
+      from_type: isPerennial ? 'CALENDAR' : 'DAS',
+      from_value: '1',
+      to_value: '30',
+      from_month: '1', from_day: '1',
+      to_month: '12', to_day: '31',
+    })
+    setTlError('')
+    setShowAddTL(true)
+  }
+
   async function handleAddTimeline(e: FormEvent) {
     e.preventDefault()
-    setAddingTL(true); setTlError('')
+    setTlError('')
+
+    // Compute from_value / to_value per Reference Type.
+    let fromVal: number
+    let toVal: number
+    if (tlForm.from_type === 'CALENDAR') {
+      fromVal = dayOfYear(parseInt(tlForm.from_month), parseInt(tlForm.from_day))
+      toVal = dayOfYear(parseInt(tlForm.to_month), parseInt(tlForm.to_day))
+      if (fromVal >= toVal) {
+        setTlError('FROM date must be earlier than TO date in the calendar year.')
+        return
+      }
+    } else {
+      fromVal = parseInt(tlForm.from_value)
+      toVal = parseInt(tlForm.to_value)
+      if (Number.isNaN(fromVal) || Number.isNaN(toVal)) {
+        setTlError('FROM and TO must be whole numbers.'); return
+      }
+      if (tlForm.from_type === 'DAS' && fromVal >= toVal) {
+        setTlError('For DAS, FROM (smaller) must be less than TO (larger). The number increases as the season progresses.')
+        return
+      }
+      if (tlForm.from_type === 'DBS' && fromVal <= toVal) {
+        setTlError('For DBS, FROM (larger) must be greater than TO (smaller). The number counts down toward sowing.')
+        return
+      }
+    }
+
+    setAddingTL(true)
     try {
       const { data } = await api.post<Timeline>(`/advisory/global/packages/${id}/timelines`, {
         name: tlForm.name, from_type: tlForm.from_type,
-        from_value: parseInt(tlForm.from_value), to_value: parseInt(tlForm.to_value),
+        from_value: fromVal, to_value: toVal,
       })
       setShowAddTL(false)
-      setTlForm({ name: '', from_type: 'DAS', from_value: '1', to_value: '30' })
       setTimelines(tls => [...tls, data])
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -415,7 +507,7 @@ export default function GlobalPackageDetailPage() {
             <h2 className="font-semibold text-slate-800">
               Timelines <span className="text-slate-400 font-normal text-sm">({timelines.length})</span>
             </h2>
-            <button onClick={() => setShowAddTL(true)}
+            <button onClick={openAddTimeline}
               className="text-sm font-medium px-3 py-1.5 rounded-xl border border-blue-300 text-blue-600 hover:bg-blue-50">
               + Add Timeline
             </button>
@@ -432,7 +524,7 @@ export default function GlobalPackageDetailPage() {
                   <div className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-slate-50" onClick={() => toggle(tl.id)}>
                     <div className="flex-1">
                       <p className="font-medium text-slate-800 text-sm">{tl.name}</p>
-                      <p className="text-xs text-slate-400 mt-0.5">{tl.from_type} · Day {tl.from_value} → {tl.to_value}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{tl.from_type} · {formatTimelineRange(tl)}</p>
                     </div>
                     <button onClick={e => { e.stopPropagation(); handleDeleteTL(tl) }} className="text-slate-300 hover:text-red-400 p-1">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -491,27 +583,87 @@ export default function GlobalPackageDetailPage() {
                     required placeholder="e.g. Germination Stage (Week 1–4)"
                     className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Reference Type</label>
-                  <select value={tlForm.from_type} onChange={e => setTlForm(f => ({ ...f, from_type: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    {FROM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1.5">From (day)</label>
-                    <input type="number" value={tlForm.from_value}
-                      onChange={e => setTlForm(f => ({ ...f, from_value: e.target.value }))}
-                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none" />
+                {(() => {
+                  const allowed = ALLOWED_FROM_TYPES_BY_PACKAGE_TYPE[pkg.package_type] || ['DAS', 'DBS', 'CALENDAR']
+                  return (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Reference Type
+                        {allowed.length === 1 && (
+                          <span className="text-xs text-slate-400 font-normal ml-2">
+                            (locked — {pkg.package_type === 'PERENNIAL' ? 'Perennials use the calendar' : 'Annuals use DAS / DBS'})
+                          </span>
+                        )}
+                      </label>
+                      <select value={tlForm.from_type}
+                        onChange={e => setTlForm(f => ({ ...f, from_type: e.target.value }))}
+                        disabled={allowed.length === 1}
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-500">
+                        {allowed.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        {tlForm.from_type === 'DAS' && 'Days After Sowing — FROM (smaller number) → TO (larger number). The clock runs forward.'}
+                        {tlForm.from_type === 'DBS' && 'Days Before Sowing — FROM (larger number) → TO (smaller number). The countdown runs toward sowing.'}
+                        {tlForm.from_type === 'CALENDAR' && 'Calendar date — FROM (earlier date) → TO (later date) within a calendar year.'}
+                      </p>
+                    </div>
+                  )
+                })()}
+
+                {tlForm.from_type === 'CALENDAR' ? (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-slate-700">Window (calendar date)</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">From</label>
+                        <div className="flex gap-1.5">
+                          <select value={tlForm.from_month}
+                            onChange={e => setTlForm(f => ({ ...f, from_month: e.target.value }))}
+                            className="flex-1 border border-slate-200 rounded-xl px-2 py-2 text-sm bg-white">
+                            {MONTH_NAMES.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}
+                          </select>
+                          <input type="number" min="1" max={MONTH_DAYS[parseInt(tlForm.from_month) - 1]}
+                            value={tlForm.from_day}
+                            onChange={e => setTlForm(f => ({ ...f, from_day: e.target.value }))}
+                            className="w-16 border border-slate-200 rounded-xl px-2 py-2 text-sm text-center" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">To</label>
+                        <div className="flex gap-1.5">
+                          <select value={tlForm.to_month}
+                            onChange={e => setTlForm(f => ({ ...f, to_month: e.target.value }))}
+                            className="flex-1 border border-slate-200 rounded-xl px-2 py-2 text-sm bg-white">
+                            {MONTH_NAMES.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}
+                          </select>
+                          <input type="number" min="1" max={MONTH_DAYS[parseInt(tlForm.to_month) - 1]}
+                            value={tlForm.to_day}
+                            onChange={e => setTlForm(f => ({ ...f, to_day: e.target.value }))}
+                            className="w-16 border border-slate-200 rounded-xl px-2 py-2 text-sm text-center" />
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1.5">To (day)</label>
-                    <input type="number" value={tlForm.to_value}
-                      onChange={e => setTlForm(f => ({ ...f, to_value: e.target.value }))}
-                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none" />
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        From (day) {tlForm.from_type === 'DBS' && <span className="text-xs text-slate-400 font-normal">(larger)</span>}
+                      </label>
+                      <input type="number" value={tlForm.from_value}
+                        onChange={e => setTlForm(f => ({ ...f, from_value: e.target.value }))}
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        To (day) {tlForm.from_type === 'DBS' && <span className="text-xs text-slate-400 font-normal">(smaller)</span>}
+                      </label>
+                      <input type="number" value={tlForm.to_value}
+                        onChange={e => setTlForm(f => ({ ...f, to_value: e.target.value }))}
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
                   </div>
-                </div>
+                )}
                 {tlError && <p className="text-sm text-red-600">{tlError}</p>}
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => { setShowAddTL(false); setTlError('') }}
