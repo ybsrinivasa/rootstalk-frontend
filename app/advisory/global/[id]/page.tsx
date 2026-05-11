@@ -41,6 +41,9 @@ interface PackageVariableAssignment {
   parameter_id: string
   variable_id: string
 }
+interface TaxonomyL2 { id: string; label: string }
+interface TaxonomyL1 { id: string; label: string; l2: TaxonomyL2[] }
+interface TaxonomyL0 { id: string; label: string; l1: TaxonomyL1[] }
 
 const STATUS_COLOUR: Record<string, string> = {
   DRAFT: 'bg-amber-100 text-amber-700',
@@ -124,6 +127,16 @@ export default function GlobalPackageDetailPage() {
   const [practiceForm, setPracticeForm] = useState({
     l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false,
   })
+
+  // Practice taxonomy — loaded once from /practice-taxonomy; drives
+  // the cascading L0 / L1 / L2 dropdowns in the Add Practice modal.
+  const [taxonomy, setTaxonomy] = useState<TaxonomyL0[]>([])
+  useEffect(() => {
+    api.get<TaxonomyL0[]>('/practice-taxonomy').then(r => setTaxonomy(r.data)).catch(() => setTaxonomy([]))
+  }, [])
+
+  const currentL0 = taxonomy.find(l0 => l0.id === practiceForm.l0_type)
+  const currentL1 = currentL0?.l1.find(l1 => l1.id === practiceForm.l1_type)
 
   const [showPushModal, setShowPushModal] = useState(false)
   const [pushStatus, setPushStatus] = useState<PushStatusRow[] | null>(null)
@@ -689,28 +702,43 @@ export default function GlobalPackageDetailPage() {
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Type (L0)</label>
                   <select value={practiceForm.l0_type}
-                    onChange={e => setPracticeForm(f => ({ ...f, l0_type: e.target.value }))}
+                    onChange={e => setPracticeForm(f => ({
+                      ...f, l0_type: e.target.value,
+                      // Reset L1/L2 when L0 changes — the cascades start fresh.
+                      l1_type: '', l2_type: '',
+                    }))}
                     className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="INPUT">INPUT</option>
-                    <option value="NON_INPUT">NON_INPUT</option>
-                    <option value="INSTRUCTION">INSTRUCTION</option>
-                    <option value="MEDIA">MEDIA</option>
+                    {taxonomy.length > 0
+                      ? taxonomy.map(l0 => <option key={l0.id} value={l0.id}>{l0.label}</option>)
+                      : <option value="INPUT">INPUT</option>}
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1.5">L1 (category)</label>
-                    <input value={practiceForm.l1_type}
-                      onChange={e => setPracticeForm(f => ({ ...f, l1_type: e.target.value }))}
-                      placeholder="e.g. FERTILISER"
-                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none" />
+                    <select value={practiceForm.l1_type}
+                      onChange={e => setPracticeForm(f => ({
+                        ...f, l1_type: e.target.value, l2_type: '',
+                      }))}
+                      disabled={!currentL0}
+                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-slate-50 disabled:text-slate-400">
+                      <option value="">— Select category —</option>
+                      {currentL0?.l1.map(l1 => (
+                        <option key={l1.id} value={l1.id}>{l1.label}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1.5">L2 (specific)</label>
-                    <input value={practiceForm.l2_type}
+                    <select value={practiceForm.l2_type}
                       onChange={e => setPracticeForm(f => ({ ...f, l2_type: e.target.value }))}
-                      placeholder="e.g. UREA"
-                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none" />
+                      disabled={!currentL1}
+                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-slate-50 disabled:text-slate-400">
+                      <option value="">— Select specific —</option>
+                      {currentL1?.l2.map(l2 => (
+                        <option key={l2.id} value={l2.id}>{l2.label}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
