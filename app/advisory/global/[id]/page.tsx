@@ -16,6 +16,14 @@ interface Practice {
   id: string; l0_type: string; l1_type: string | null; l2_type: string | null
   display_order: number; is_special_input: boolean
 }
+interface PushStatusRow {
+  client_id: string
+  client_name: string
+  already_pushed: boolean
+  pushed_at: string | null
+  latest_local_published_at: string | null
+  has_pending_draft: boolean
+}
 
 const STATUS_COLOUR: Record<string, string> = {
   DRAFT: 'bg-amber-100 text-amber-700',
@@ -49,6 +57,11 @@ export default function GlobalPackageDetailPage() {
   const [practiceForm, setPracticeForm] = useState({
     l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false,
   })
+
+  const [showPushModal, setShowPushModal] = useState(false)
+  const [pushStatus, setPushStatus] = useState<PushStatusRow[] | null>(null)
+  const [pushingClientId, setPushingClientId] = useState<string | null>(null)
+  const [pushError, setPushError] = useState('')
 
   const loadTimelines = () =>
     api.get<Timeline[]>(`/advisory/global/packages/${id}/timelines`)
@@ -131,6 +144,31 @@ export default function GlobalPackageDetailPage() {
     setPracticeMap(m => ({ ...m, [tlId]: (m[tlId] || []).filter(p => p.id !== practiceId) }))
   }
 
+  const loadPushStatus = () =>
+    api.get<PushStatusRow[]>(`/advisory/global/packages/${id}/push-status`)
+      .then(r => setPushStatus(r.data))
+      .catch(() => setPushStatus([]))
+
+  function openPushModal() {
+    setShowPushModal(true)
+    setPushError('')
+    setPushStatus(null)
+    loadPushStatus()
+  }
+
+  async function handlePushToClient(clientId: string) {
+    setPushingClientId(clientId)
+    setPushError('')
+    try {
+      await api.post(`/client/${clientId}/packages/${id}/push`)
+      await loadPushStatus()
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string | { code?: string; message?: string } } } })?.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : detail?.message
+      setPushError(msg || 'Push failed.')
+    } finally { setPushingClientId(null) }
+  }
+
   if (!pkg) return <AdminLayout><div className="pt-20 text-center text-slate-400">Loading…</div></AdminLayout>
 
   return (
@@ -154,16 +192,29 @@ export default function GlobalPackageDetailPage() {
             </p>
             {pkg.description && <p className="text-slate-400 text-sm mt-1">{pkg.description}</p>}
           </div>
-          {pkg.status === 'DRAFT' && (
-            <button onClick={handlePublish} disabled={publishing}
-              className="shrink-0 bg-blue-600 text-white text-sm font-semibold px-4 py-2.5 rounded-xl disabled:opacity-50">
-              {publishing ? 'Publishing…' : '✓ Publish'}
+          <div className="flex flex-col gap-2 shrink-0">
+            {pkg.status === 'DRAFT' && (
+              <button onClick={handlePublish} disabled={publishing}
+                className="bg-blue-600 text-white text-sm font-semibold px-4 py-2.5 rounded-xl disabled:opacity-50">
+                {publishing ? 'Publishing…' : '✓ Publish'}
+              </button>
+            )}
+            <button
+              onClick={openPushModal}
+              disabled={pkg.status !== 'ACTIVE'}
+              title={pkg.status !== 'ACTIVE'
+                ? 'Publish this Global Package before pushing to clients.'
+                : 'Push this Global Package to one of your assigned clients.'}
+              className="border border-blue-300 text-blue-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed">
+              ↗ Push to clients
             </button>
-          )}
+          </div>
         </div>
 
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-          <strong>Global template</strong> — Clients fork this to create their own customised copy. Changes here do not affect existing client copies.
+          <strong>Global template.</strong> Publish first, then push to assigned clients to seed
+          their local copy. Each push is once-per-client; SEs pull subsequent versions themselves
+          from the CA portal once they're ready to review your changes.
         </div>
 
         {/* Timelines */}
@@ -334,6 +385,68 @@ export default function GlobalPackageDetailPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+        {/* Push to Clients Modal */}
+        {showPushModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+              <div className="p-6 border-b border-slate-100">
+                <h2 className="font-bold text-slate-900">Push “{pkg.name}” to a client</h2>
+                <p className="text-slate-500 text-sm mt-0.5">
+                  First contact only. After this, the client&apos;s SE pulls subsequent versions.
+                </p>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-2">
+                {pushStatus === null ? (
+                  <p className="text-slate-400 text-sm">Loading…</p>
+                ) : pushStatus.length === 0 ? (
+                  <p className="text-slate-400 text-sm italic">
+                    You have no assigned clients with edit rights.
+                  </p>
+                ) : pushStatus.map(row => (
+                  <div key={row.client_id} className="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-slate-800 text-sm truncate">{row.client_name}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {row.already_pushed ? (
+                          <>
+                            Pushed {row.pushed_at ? new Date(row.pushed_at).toLocaleDateString() : ''}
+                            {row.latest_local_published_at && (
+                              <> · Local v live since {new Date(row.latest_local_published_at).toLocaleDateString()}</>
+                            )}
+                            {row.has_pending_draft && (
+                              <span className="text-amber-600"> · DRAFT in progress</span>
+                            )}
+                          </>
+                        ) : 'Not yet pushed'}
+                      </p>
+                    </div>
+                    {row.already_pushed ? (
+                      <span className="text-xs font-medium text-slate-400 px-3 py-1.5">Already pushed</span>
+                    ) : (
+                      <button
+                        onClick={() => handlePushToClient(row.client_id)}
+                        disabled={pushingClientId === row.client_id}
+                        className="text-sm font-semibold text-white bg-blue-600 px-4 py-1.5 rounded-xl disabled:opacity-50">
+                        {pushingClientId === row.client_id ? 'Pushing…' : 'Push'}
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {pushError && (
+                  <p className="text-sm text-red-600 mt-3">{pushError}</p>
+                )}
+              </div>
+
+              <div className="p-4 border-t border-slate-100 flex justify-end">
+                <button onClick={() => setShowPushModal(false)}
+                  className="text-sm font-medium text-slate-700 px-4 py-2 rounded-xl hover:bg-slate-50">
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         )}

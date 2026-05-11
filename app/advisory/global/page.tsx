@@ -59,7 +59,7 @@ export default function GlobalPackagesPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Global CCA Library</h1>
           <p className="text-slate-500 text-sm mt-0.5">
-            Master Package of Practices templates. Clients fork these to create their own customised copies.
+            Master Package of Practices templates. Publish, then push selectively to assigned clients.
           </p>
         </div>
         <button onClick={() => setShowCreate(true)}
@@ -74,7 +74,7 @@ export default function GlobalPackagesPage() {
         <div className="bg-white rounded-2xl p-12 text-center border border-dashed border-slate-200">
           <p className="text-slate-600 font-medium">No global packages yet</p>
           <p className="text-slate-400 text-sm mt-1">
-            Create standard Package of Practices templates here. Clients will import and customise them for their territory.
+            Create standard Package of Practices templates here. Once published, push them to assigned clients from the package detail page.
           </p>
           <button onClick={() => setShowCreate(true)}
             className="mt-4 bg-blue-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl">
@@ -121,7 +121,7 @@ export default function GlobalPackagesPage() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
             <div className="p-6 border-b border-slate-100">
               <h2 className="font-bold text-slate-900">New Global Package Template</h2>
-              <p className="text-slate-500 text-sm mt-0.5">This package will be available to all clients to fork and customise</p>
+              <p className="text-slate-500 text-sm mt-0.5">Once published, you&apos;ll be able to push this to assigned clients from the detail page.</p>
             </div>
             <form onSubmit={handleCreate} className="p-6 space-y-4">
               <div>
