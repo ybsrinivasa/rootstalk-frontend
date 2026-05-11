@@ -94,6 +94,21 @@ function shortMonthDay(doy: number): string {
   return `${MONTH_NAMES[month - 1].slice(0, 3)} ${day}`
 }
 
+// FastAPI returns `detail` as a string OR an object like
+// {code, message, errors}. Rendering an object as a React child
+// throws "Objects are not valid as a React child" and kills the
+// tree (Chrome then shows "This page couldn't load"). Always
+// extract a string before assigning to state used in JSX.
+function extractErrorMessage(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (detail && typeof detail === 'object') {
+    const obj = detail as { code?: string; message?: string }
+    if (obj.message) return obj.message
+  }
+  return fallback
+}
+
 function formatTimelineRange(tl: { from_type: string; from_value: number; to_value: number }): string {
   if (tl.from_type === 'CALENDAR') {
     return `${shortMonthDay(tl.from_value)} → ${shortMonthDay(tl.to_value)}`
@@ -249,8 +264,7 @@ export default function GlobalPackageDetailPage() {
       setShowAddTL(false)
       setTimelines(tls => [...tls, data])
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setTlError(msg || 'Failed.')
+      setTlError(extractErrorMessage(err, 'Failed to add timeline.'))
     } finally { setAddingTL(false) }
   }
 
@@ -278,8 +292,7 @@ export default function GlobalPackageDetailPage() {
       setPracticeForm({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
       loadPractices(showAddPractice)
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setPracticeError(msg || 'Failed.')
+      setPracticeError(extractErrorMessage(err, 'Failed to add practice.'))
     } finally { setAddingPractice(false) }
   }
 
