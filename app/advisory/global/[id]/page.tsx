@@ -24,6 +24,22 @@ interface PushStatusRow {
   latest_local_published_at: string | null
   has_pending_draft: boolean
 }
+interface GlobalParameter {
+  id: string
+  crop_cosh_id: string
+  name: string
+  source: 'COSH' | 'CUSTOM'
+  display_order: number
+}
+interface GlobalVariable {
+  id: string
+  parameter_id: string
+  name: string
+}
+interface PackageVariableAssignment {
+  parameter_id: string
+  variable_id: string
+}
 
 const STATUS_COLOUR: Record<string, string> = {
   DRAFT: 'bg-amber-100 text-amber-700',
@@ -62,6 +78,15 @@ export default function GlobalPackageDetailPage() {
   const [pushStatus, setPushStatus] = useState<PushStatusRow[] | null>(null)
   const [pushingClientId, setPushingClientId] = useState<string | null>(null)
   const [pushError, setPushError] = useState('')
+
+  // Parameters & Variables (Batch 9, 2026-05-11)
+  const [parameters, setParameters] = useState<GlobalParameter[]>([])
+  const [variablesByParam, setVariablesByParam] = useState<Record<string, GlobalVariable[]>>({})
+  const [packageVariables, setPackageVariables] = useState<PackageVariableAssignment[]>([])
+  const [newParamName, setNewParamName] = useState('')
+  const [newVarForParamId, setNewVarForParamId] = useState<string | null>(null)
+  const [newVarName, setNewVarName] = useState('')
+  const [pvSaveError, setPvSaveError] = useState('')
 
   const loadTimelines = () =>
     api.get<Timeline[]>(`/advisory/global/packages/${id}/timelines`)
@@ -169,6 +194,90 @@ export default function GlobalPackageDetailPage() {
     } finally { setPushingClientId(null) }
   }
 
+  // ── Parameters & Variables ─────────────────────────────────────────────────
+
+  const loadParameters = async (cropCoshId: string) => {
+    const { data } = await api.get<GlobalParameter[]>(
+      `/advisory/global/parameters?crop_cosh_id=${encodeURIComponent(cropCoshId)}`,
+    )
+    setParameters(data)
+    const map: Record<string, GlobalVariable[]> = {}
+    for (const p of data) {
+      const r = await api.get<GlobalVariable[]>(`/advisory/global/parameters/${p.id}/variables`)
+      map[p.id] = r.data
+    }
+    setVariablesByParam(map)
+  }
+
+  const loadPackageVariables = async () => {
+    const { data } = await api.get<PackageVariableAssignment[]>(
+      `/advisory/global/packages/${id}/variables`,
+    )
+    setPackageVariables(data)
+  }
+
+  useEffect(() => {
+    if (!pkg) return
+    loadParameters(pkg.crop_cosh_id)
+    loadPackageVariables()
+  }, [pkg?.crop_cosh_id])
+
+  async function handleAddParameter() {
+    if (!newParamName.trim() || !pkg) return
+    setPvSaveError('')
+    try {
+      await api.post('/advisory/global/parameters', {
+        crop_cosh_id: pkg.crop_cosh_id,
+        name: newParamName.trim(),
+      })
+      setNewParamName('')
+      await loadParameters(pkg.crop_cosh_id)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : (detail as { message?: string })?.message
+      setPvSaveError(msg || 'Failed to add parameter.')
+    }
+  }
+
+  async function handleAddVariable(parameterId: string) {
+    if (!newVarName.trim() || !pkg) return
+    setPvSaveError('')
+    try {
+      await api.post(`/advisory/global/parameters/${parameterId}/variables`, {
+        parameter_id: parameterId, name: newVarName.trim(),
+      })
+      setNewVarName(''); setNewVarForParamId(null)
+      await loadParameters(pkg.crop_cosh_id)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : (detail as { message?: string })?.message
+      setPvSaveError(msg || 'Failed to add variable.')
+    }
+  }
+
+  function getAssignedVariableId(parameterId: string): string {
+    return packageVariables.find(pv => pv.parameter_id === parameterId)?.variable_id || ''
+  }
+
+  async function handleAssignVariable(parameterId: string, variableId: string) {
+    setPvSaveError('')
+    // Build the next assignment set: replace any existing entry for
+    // this parameter; drop the entry entirely if variableId is empty.
+    const next: PackageVariableAssignment[] = packageVariables
+      .filter(pv => pv.parameter_id !== parameterId)
+    if (variableId) {
+      next.push({ parameter_id: parameterId, variable_id: variableId })
+    }
+    try {
+      await api.put(`/advisory/global/packages/${id}/variables`, { assignments: next })
+      setPackageVariables(next)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : (detail as { message?: string })?.message
+      setPvSaveError(msg || 'Failed to update package signature.')
+    }
+  }
+
   if (!pkg) return <AdminLayout><div className="pt-20 text-center text-slate-400">Loading…</div></AdminLayout>
 
   return (
@@ -215,6 +324,99 @@ export default function GlobalPackageDetailPage() {
           <strong>Global template.</strong> Publish first, then push to assigned clients to seed
           their local copy. Each push is once-per-client; SEs pull subsequent versions themselves
           from the CA portal once they're ready to review your changes.
+        </div>
+
+        {/* Parameters & Variables (Batch 9) */}
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-slate-800 text-sm">Parameters &amp; Variables</h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                The signature that distinguishes this Package from siblings for the same crop.
+                Deep-copied to every Local on push.
+              </p>
+            </div>
+          </div>
+
+          <div className="px-5 py-4 space-y-3">
+            {parameters.length === 0 ? (
+              <p className="text-xs text-slate-400 italic">
+                No parameters yet for <span className="font-mono">{pkg.crop_cosh_id}</span>. Add one below
+                (e.g. Irrigation) and give it a couple of variables (e.g. Drip, Flood).
+              </p>
+            ) : parameters.map(param => {
+              const vars = variablesByParam[param.id] || []
+              const assignedId = getAssignedVariableId(param.id)
+              return (
+                <div key={param.id} className="flex items-center gap-3 py-2 border-b border-slate-50 last:border-0">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-700 truncate">{param.name}</p>
+                    {vars.length === 0 ? (
+                      <p className="text-[11px] text-slate-400 italic mt-0.5">
+                        no variables — add at least two to be assignable
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        {vars.length} variable{vars.length === 1 ? '' : 's'}: {vars.map(v => v.name).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                  <select
+                    value={assignedId}
+                    onChange={e => handleAssignVariable(param.id, e.target.value)}
+                    className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+                    <option value="">— not set —</option>
+                    {vars.map(v => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => {
+                      setNewVarForParamId(newVarForParamId === param.id ? null : param.id)
+                      setNewVarName('')
+                    }}
+                    className="text-xs text-blue-600 hover:underline">
+                    {newVarForParamId === param.id ? 'Cancel' : '+ Variable'}
+                  </button>
+                </div>
+              )
+            })}
+
+            {/* Inline +Variable composer (one row at a time) */}
+            {newVarForParamId && (
+              <div className="flex items-center gap-2 pt-2">
+                <input
+                  value={newVarName}
+                  onChange={e => setNewVarName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddVariable(newVarForParamId) }}
+                  autoFocus
+                  placeholder="New variable name (e.g. Drip)"
+                  className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <button onClick={() => handleAddVariable(newVarForParamId)}
+                  disabled={!newVarName.trim()}
+                  className="text-xs font-semibold bg-blue-600 text-white px-3 py-1.5 rounded-lg disabled:opacity-50">
+                  Add
+                </button>
+              </div>
+            )}
+
+            {/* Add Parameter row */}
+            <div className="flex items-center gap-2 pt-3 border-t border-slate-50">
+              <input
+                value={newParamName}
+                onChange={e => setNewParamName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAddParameter() }}
+                placeholder="New parameter name (e.g. Irrigation)"
+                className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <button onClick={handleAddParameter}
+                disabled={!newParamName.trim()}
+                className="text-sm font-medium px-3 py-1.5 rounded-lg border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-50">
+                + Parameter
+              </button>
+            </div>
+
+            {pvSaveError && <p className="text-xs text-red-600">{pvSaveError}</p>}
+          </div>
         </div>
 
         {/* Timelines */}
