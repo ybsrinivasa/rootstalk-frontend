@@ -8,6 +8,7 @@ interface Package {
   id: string; name: string; crop_cosh_id: string
   package_type: string; status: string; duration_days: number
   version: number; description: string | null; created_at: string
+  start_date_label_cosh_id: string | null
 }
 interface Timeline {
   id: string; name: string; from_type: string; from_value: number; to_value: number; display_order: number
@@ -78,6 +79,16 @@ export default function GlobalPackageDetailPage() {
   const [pushStatus, setPushStatus] = useState<PushStatusRow[] | null>(null)
   const [pushingClientId, setPushingClientId] = useState<string | null>(null)
   const [pushError, setPushError] = useState('')
+
+  // Edit Package details
+  const [showEdit, setShowEdit] = useState(false)
+  const [editForm, setEditForm] = useState({
+    name: '', duration_days: '120',
+    start_date_label_cosh_id: 'label:sowing_date',
+    description: '',
+  })
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [editError, setEditError] = useState('')
 
   // Parameters & Variables (Batch 9, 2026-05-11)
   const [parameters, setParameters] = useState<GlobalParameter[]>([])
@@ -179,6 +190,44 @@ export default function GlobalPackageDetailPage() {
     setPushError('')
     setPushStatus(null)
     loadPushStatus()
+  }
+
+  const START_DATE_LABELS = [
+    { cosh_id: 'label:sowing_date',   name: 'Sowing Date' },
+    { cosh_id: 'label:planting_date', name: 'Planting Date' },
+    { cosh_id: 'label:pruning_date',  name: 'Pruning Date' },
+  ]
+
+  function openEdit() {
+    if (!pkg) return
+    setEditForm({
+      name: pkg.name,
+      duration_days: String(pkg.duration_days),
+      start_date_label_cosh_id: pkg.start_date_label_cosh_id || 'label:sowing_date',
+      description: pkg.description || '',
+    })
+    setEditError('')
+    setShowEdit(true)
+  }
+
+  async function handleSaveEdit(e: FormEvent) {
+    e.preventDefault()
+    if (!pkg) return
+    setSavingEdit(true); setEditError('')
+    try {
+      const { data } = await api.put<Package>(`/advisory/global/packages/${id}`, {
+        name: editForm.name.trim() || undefined,
+        duration_days: parseInt(editForm.duration_days),
+        start_date_label_cosh_id: editForm.start_date_label_cosh_id,
+        description: editForm.description.trim() || null,
+      })
+      setPkg(data)
+      setShowEdit(false)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : (detail as { message?: string })?.message
+      setEditError(msg || 'Failed to save changes.')
+    } finally { setSavingEdit(false) }
   }
 
   async function handlePushToClient(clientId: string) {
@@ -308,6 +357,11 @@ export default function GlobalPackageDetailPage() {
                 {publishing ? 'Publishing…' : '✓ Publish'}
               </button>
             )}
+            <button
+              onClick={openEdit}
+              className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50">
+              ✎ Edit details
+            </button>
             <button
               onClick={openPushModal}
               disabled={pkg.status !== 'ACTIVE'}
@@ -590,6 +644,71 @@ export default function GlobalPackageDetailPage() {
             </div>
           </div>
         )}
+        {/* Edit Package Details Modal */}
+        {showEdit && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+              <div className="p-6 border-b border-slate-100">
+                <h2 className="font-bold text-slate-900">Edit Package Details</h2>
+                <p className="text-slate-500 text-sm mt-0.5">
+                  Crop and type are locked — changing them would break content semantics
+                  on already-pushed Locals.
+                </p>
+              </div>
+              <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Package Name</label>
+                  <input value={editForm.name}
+                    onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                    required
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Start Date Label</label>
+                  <select value={editForm.start_date_label_cosh_id}
+                    onChange={e => setEditForm(f => ({ ...f, start_date_label_cosh_id: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                    {START_DATE_LABELS.map(l => (
+                      <option key={l.cosh_id} value={l.cosh_id}>{l.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                    Duration (days)
+                    {pkg.package_type === 'PERENNIAL' && (
+                      <span className="text-xs text-slate-400 font-normal ml-2">(locked at 365 for Perennial)</span>
+                    )}
+                  </label>
+                  <input type="number" min="1" value={editForm.duration_days}
+                    disabled={pkg.package_type === 'PERENNIAL'}
+                    onChange={e => setEditForm(f => ({ ...f, duration_days: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Description</label>
+                  <textarea value={editForm.description}
+                    onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+                    rows={3}
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                </div>
+                {editError && <p className="text-sm text-red-600">{editError}</p>}
+                <div className="flex gap-3 pt-2">
+                  <button type="button"
+                    onClick={() => { setShowEdit(false); setEditError('') }}
+                    className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={savingEdit}
+                    className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
+                    {savingEdit ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* Push to Clients Modal */}
         {showPushModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
