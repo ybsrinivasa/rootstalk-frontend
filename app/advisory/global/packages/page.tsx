@@ -24,6 +24,15 @@ const STATUS_COLOUR: Record<string, string> = {
   INACTIVE: 'bg-slate-100 text-slate-500',
 }
 
+// V1 hardcoded — Cosh hasn't shipped a start-date-label Connect yet.
+// Same list the CA portal uses; replace with a /cca/start-date-labels
+// fetch once Cosh ships it.
+const START_DATE_LABELS = [
+  { cosh_id: 'label:sowing_date',   name: 'Sowing Date' },
+  { cosh_id: 'label:planting_date', name: 'Planting Date' },
+  { cosh_id: 'label:pruning_date',  name: 'Pruning Date' },
+]
+
 function GlobalPackagesContent() {
   const router = useRouter()
   const params = useSearchParams()
@@ -38,7 +47,9 @@ function GlobalPackagesContent() {
 
   const [form, setForm] = useState({
     name: '', crop_cosh_id: '', package_type: 'ANNUAL',
-    duration_days: '120', description: '',
+    duration_days: '120',
+    start_date_label_cosh_id: 'label:sowing_date',
+    description: '',
   })
 
   const load = () => {
@@ -79,6 +90,7 @@ function GlobalPackagesContent() {
       crop_cosh_id: cropFilter || '',  // pre-fill from chip
       package_type: 'ANNUAL',
       duration_days: '120',
+      start_date_label_cosh_id: 'label:sowing_date',
       description: '',
     })
     setError('')
@@ -97,7 +109,12 @@ function GlobalPackagesContent() {
         ...form, duration_days: parseInt(form.duration_days),
       })
       setShowCreate(false)
-      setForm({ name: '', crop_cosh_id: '', package_type: 'ANNUAL', duration_days: '120', description: '' })
+      setForm({
+        name: '', crop_cosh_id: '', package_type: 'ANNUAL',
+        duration_days: '120',
+        start_date_label_cosh_id: 'label:sowing_date',
+        description: '',
+      })
       load()
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
@@ -211,6 +228,19 @@ function GlobalPackagesContent() {
                 </select>
                 <p className="text-[11px] text-slate-400 mt-1">
                   All Cosh-classified crops. Curated upstream — appears here on next sync.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">Start Date Label</label>
+                <select value={form.start_date_label_cosh_id}
+                  onChange={e => setForm(f => ({ ...f, start_date_label_cosh_id: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                  {START_DATE_LABELS.map(l => (
+                    <option key={l.cosh_id} value={l.cosh_id}>{l.name}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  The farmer-facing crop-start anchor for this package.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3">
