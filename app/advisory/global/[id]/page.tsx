@@ -44,6 +44,15 @@ interface PackageVariableAssignment {
 interface TaxonomyL2 { id: string; label: string }
 interface TaxonomyL1 { id: string; label: string; l2: TaxonomyL2[] }
 interface TaxonomyL0 { id: string; label: string; l1: TaxonomyL1[] }
+interface L2ElementField {
+  name: string
+  label: string
+  source: string
+  mandatory: boolean
+  mandatory_if_set: string[]
+  cascade_from: string[]
+  auto_selected: boolean
+}
 
 const STATUS_COLOUR: Record<string, string> = {
   DRAFT: 'bg-amber-100 text-amber-700',
@@ -152,6 +161,48 @@ export default function GlobalPackageDetailPage() {
 
   const currentL0 = taxonomy.find(l0 => l0.id === practiceForm.l0_type)
   const currentL1 = currentL0?.l1.find(l1 => l1.id === practiceForm.l1_type)
+
+  // L2 element spec — fetched when an L2 is picked. Renders the
+  // appropriate input per field. Values are stored as strings in
+  // `elementValues`, keyed by field.name. Submit packs them into
+  // the elements[] payload (see handleAddPractice).
+  const [l2Spec, setL2Spec] = useState<L2ElementField[]>([])
+  const [elementValues, setElementValues] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!practiceForm.l2_type) {
+      setL2Spec([]); setElementValues({}); return
+    }
+    api.get<{ elements: L2ElementField[] }>(
+      `/practice-taxonomy/elements/${encodeURIComponent(practiceForm.l2_type)}`,
+    )
+      .then(r => {
+        setL2Spec(r.data.elements)
+        // Reset value map to a clean slate keyed by the new spec.
+        const fresh: Record<string, string> = {}
+        for (const f of r.data.elements) fresh[f.name] = ''
+        setElementValues(fresh)
+      })
+      .catch(() => { setL2Spec([]); setElementValues({}) })
+  }, [practiceForm.l2_type])
+
+  // Helper: source-string → input variant. cosh_core / cosh_cascade
+  // fall back to free text until Cosh ships the dropdown data
+  // (the validator currently treats `cosh_ref` and `value` as
+  // equivalent for "provided", so free text is acceptable input
+  // for V1 demo authoring).
+  function elementInputVariant(source: string): 'text' | 'textarea' | 'number' | 'media' | 'auto' {
+    if (source === 'auto_calculated') return 'auto'
+    if (source.startsWith('media_')) return 'media'
+    if (source.startsWith('number_')) return 'number'
+    if (source === 'text_area') return 'textarea'
+    return 'text'
+  }
+
+  function coshHint(source: string): string {
+    if (source.startsWith('cosh_core:')) return ` (Cosh: ${source.slice(10)})`
+    if (source.startsWith('cosh_cascade:')) return ` (Cosh cascade: ${source.slice(13)})`
+    return ''
+  }
 
   const [showPushModal, setShowPushModal] = useState(false)
   const [pushStatus, setPushStatus] = useState<PushStatusRow[] | null>(null)
@@ -279,6 +330,21 @@ export default function GlobalPackageDetailPage() {
     e.preventDefault()
     if (!showAddPractice) return
     setAddingPractice(true); setPracticeError('')
+
+    // Pack only the fields the user actually filled in. The
+    // validator treats absent fields as unprovided, so we don't
+    // send empty rows (would surface as UNKNOWN_FIELD otherwise).
+    // auto_calculated + media_* fields are skipped on the form
+    // already; nothing to send for them here.
+    const elements: { element_type: string; value?: string; cosh_ref?: string; unit_cosh_id?: string }[] = []
+    for (const field of l2Spec) {
+      if (elementInputVariant(field.source) === 'auto') continue
+      if (elementInputVariant(field.source) === 'media') continue
+      const raw = elementValues[field.name]
+      if (raw === undefined || raw.trim() === '') continue
+      elements.push({ element_type: field.name, value: raw.trim() })
+    }
+
     try {
       await api.post(`/advisory/global/packages/${id}/timelines/${showAddPractice}/practices`, {
         l0_type: practiceForm.l0_type,
@@ -286,10 +352,11 @@ export default function GlobalPackageDetailPage() {
         l2_type: practiceForm.l2_type || null,
         display_order: parseInt(practiceForm.display_order),
         is_special_input: practiceForm.is_special_input,
-        elements: [],
+        elements,
       })
       setShowAddPractice(null)
       setPracticeForm({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
+      setL2Spec([]); setElementValues({})
       loadPractices(showAddPractice)
     } catch (err: unknown) {
       setPracticeError(extractErrorMessage(err, 'Failed to add practice.'))
@@ -707,11 +774,11 @@ export default function GlobalPackageDetailPage() {
         {/* Add Practice Modal */}
         {showAddPractice && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90vh] flex flex-col">
               <div className="p-6 border-b border-slate-100">
                 <h2 className="font-bold text-slate-900">Add Practice</h2>
               </div>
-              <form onSubmit={handleAddPractice} className="p-6 space-y-4">
+              <form onSubmit={handleAddPractice} className="p-6 space-y-4 overflow-y-auto">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Type (L0)</label>
                   <select value={practiceForm.l0_type}
@@ -754,6 +821,70 @@ export default function GlobalPackageDetailPage() {
                     </select>
                   </div>
                 </div>
+                {/* Element form — driven by /practice-taxonomy/elements/{l2}.
+                    Renders only when an L2 is selected. cosh_core / cosh_cascade
+                    fields fall back to free text until Cosh ships the dropdown
+                    data — the validator currently accepts either cosh_ref or a
+                    typed value as "provided", so this works for V1 authoring. */}
+                {practiceForm.l2_type && l2Spec.length > 0 && (
+                  <div className="border-t border-slate-100 pt-4 space-y-3">
+                    <div className="flex items-baseline justify-between">
+                      <h3 className="text-sm font-semibold text-slate-800">Elements</h3>
+                      <p className="text-[11px] text-slate-400">
+                        Cosh-sourced fields are free text for now (Cosh data still pending).
+                      </p>
+                    </div>
+                    {l2Spec.map(field => {
+                      const variant = elementInputVariant(field.source)
+                      if (variant === 'auto') {
+                        return (
+                          <div key={field.name} className="text-xs text-slate-400 italic">
+                            {field.label} — auto-calculated server-side
+                          </div>
+                        )
+                      }
+                      if (variant === 'media') {
+                        return (
+                          <div key={field.name} className="text-xs text-slate-400 italic">
+                            {field.label} — media upload not yet wired (deferred)
+                          </div>
+                        )
+                      }
+                      const labelText = (
+                        <>
+                          {field.label}
+                          {field.mandatory && <span className="text-red-500 ml-0.5">*</span>}
+                          <span className="text-[11px] text-slate-400 font-normal">{coshHint(field.source)}</span>
+                        </>
+                      )
+                      const onChange = (v: string) =>
+                        setElementValues(prev => ({ ...prev, [field.name]: v }))
+                      if (variant === 'textarea') {
+                        return (
+                          <div key={field.name}>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">{labelText}</label>
+                            <textarea value={elementValues[field.name] || ''}
+                              onChange={e => onChange(e.target.value)}
+                              rows={2}
+                              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                          </div>
+                        )
+                      }
+                      return (
+                        <div key={field.name}>
+                          <label className="block text-xs font-medium text-slate-700 mb-1">{labelText}</label>
+                          <input
+                            type={variant === 'number' ? 'number' : 'text'}
+                            step={field.source === 'number_4dec' ? '0.0001' : field.source === 'number_2dec' ? '0.01' : undefined}
+                            value={elementValues[field.name] || ''}
+                            onChange={e => onChange(e.target.value)}
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
                 <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
                   <input type="checkbox" checked={practiceForm.is_special_input}
                     onChange={e => setPracticeForm(f => ({ ...f, is_special_input: e.target.checked }))}
