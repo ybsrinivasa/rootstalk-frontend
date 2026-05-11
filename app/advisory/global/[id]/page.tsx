@@ -90,7 +90,11 @@ export default function GlobalPackageDetailPage() {
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState('')
 
-  // Parameters & Variables (Batch 9, 2026-05-11)
+  // Parameters & Variables (Batch 9, 2026-05-11). Moved into its
+  // own modal 2026-05-11 — full editor is too heavy to share the
+  // page with the Timeline workspace; compact summary lives in
+  // the header.
+  const [showSignature, setShowSignature] = useState(false)
   const [parameters, setParameters] = useState<GlobalParameter[]>([])
   const [variablesByParam, setVariablesByParam] = useState<Record<string, GlobalVariable[]>>({})
   const [packageVariables, setPackageVariables] = useState<PackageVariableAssignment[]>([])
@@ -349,6 +353,26 @@ export default function GlobalPackageDetailPage() {
               {pkg.package_type} · {pkg.duration_days} days · Crop: <span className="font-mono">{pkg.crop_cosh_id}</span> · v{pkg.version}
             </p>
             {pkg.description && <p className="text-slate-400 text-sm mt-1">{pkg.description}</p>}
+            {parameters.length > 0 && (
+              <p className="text-xs text-slate-500 mt-2">
+                <span className="font-semibold text-slate-600">Signature:</span>{' '}
+                {parameters.map((p, i) => {
+                  const assignedId = packageVariables.find(pv => pv.parameter_id === p.id)?.variable_id
+                  const variable = assignedId
+                    ? (variablesByParam[p.id] || []).find(v => v.id === assignedId)
+                    : null
+                  return (
+                    <span key={p.id}>
+                      {i > 0 && <span className="text-slate-300 mx-1.5">·</span>}
+                      <span className="text-slate-500">{p.name}: </span>
+                      <span className={variable ? 'text-slate-700 font-medium' : 'text-slate-400 italic'}>
+                        {variable ? variable.name : 'not set'}
+                      </span>
+                    </span>
+                  )
+                })}
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-2 shrink-0">
             {pkg.status === 'DRAFT' && (
@@ -361,6 +385,11 @@ export default function GlobalPackageDetailPage() {
               onClick={openEdit}
               className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50">
               ✎ Edit details
+            </button>
+            <button
+              onClick={() => { setShowSignature(true); setPvSaveError('') }}
+              className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50">
+              ✎ Set signature
             </button>
             <button
               onClick={openPushModal}
@@ -378,99 +407,6 @@ export default function GlobalPackageDetailPage() {
           <strong>Global template.</strong> Publish first, then push to assigned clients to seed
           their local copy. Each push is once-per-client; SEs pull subsequent versions themselves
           from the CA portal once they're ready to review your changes.
-        </div>
-
-        {/* Parameters & Variables (Batch 9) */}
-        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
-            <div>
-              <h2 className="font-semibold text-slate-800 text-sm">Parameters &amp; Variables</h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                The signature that distinguishes this Package from siblings for the same crop.
-                Deep-copied to every Local on push.
-              </p>
-            </div>
-          </div>
-
-          <div className="px-5 py-4 space-y-3">
-            {parameters.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">
-                No parameters yet for <span className="font-mono">{pkg.crop_cosh_id}</span>. Add one below
-                (e.g. Irrigation) and give it a couple of variables (e.g. Drip, Flood).
-              </p>
-            ) : parameters.map(param => {
-              const vars = variablesByParam[param.id] || []
-              const assignedId = getAssignedVariableId(param.id)
-              return (
-                <div key={param.id} className="flex items-center gap-3 py-2 border-b border-slate-50 last:border-0">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-700 truncate">{param.name}</p>
-                    {vars.length === 0 ? (
-                      <p className="text-[11px] text-slate-400 italic mt-0.5">
-                        no variables — add at least two to be assignable
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        {vars.length} variable{vars.length === 1 ? '' : 's'}: {vars.map(v => v.name).join(', ')}
-                      </p>
-                    )}
-                  </div>
-                  <select
-                    value={assignedId}
-                    onChange={e => handleAssignVariable(param.id, e.target.value)}
-                    className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
-                    <option value="">— not set —</option>
-                    {vars.map(v => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => {
-                      setNewVarForParamId(newVarForParamId === param.id ? null : param.id)
-                      setNewVarName('')
-                    }}
-                    className="text-xs text-blue-600 hover:underline">
-                    {newVarForParamId === param.id ? 'Cancel' : '+ Variable'}
-                  </button>
-                </div>
-              )
-            })}
-
-            {/* Inline +Variable composer (one row at a time) */}
-            {newVarForParamId && (
-              <div className="flex items-center gap-2 pt-2">
-                <input
-                  value={newVarName}
-                  onChange={e => setNewVarName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddVariable(newVarForParamId) }}
-                  autoFocus
-                  placeholder="New variable name (e.g. Drip)"
-                  className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                <button onClick={() => handleAddVariable(newVarForParamId)}
-                  disabled={!newVarName.trim()}
-                  className="text-xs font-semibold bg-blue-600 text-white px-3 py-1.5 rounded-lg disabled:opacity-50">
-                  Add
-                </button>
-              </div>
-            )}
-
-            {/* Add Parameter row */}
-            <div className="flex items-center gap-2 pt-3 border-t border-slate-50">
-              <input
-                value={newParamName}
-                onChange={e => setNewParamName(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleAddParameter() }}
-                placeholder="New parameter name (e.g. Irrigation)"
-                className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <button onClick={handleAddParameter}
-                disabled={!newParamName.trim()}
-                className="text-sm font-medium px-3 py-1.5 rounded-lg border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-50">
-                + Parameter
-              </button>
-            </div>
-
-            {pvSaveError && <p className="text-xs text-red-600">{pvSaveError}</p>}
-          </div>
         </div>
 
         {/* Timelines */}
@@ -705,6 +641,107 @@ export default function GlobalPackageDetailPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Set Signature Modal — Parameters & Variables (Batch 9) */}
+        {showSignature && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+              <div className="p-6 border-b border-slate-100">
+                <h2 className="font-bold text-slate-900">Package Signature</h2>
+                <p className="text-slate-500 text-sm mt-0.5">
+                  Parameters &amp; Variables that distinguish this Package from siblings for the
+                  same crop. Deep-copied to every Local on push.
+                </p>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-3">
+                {parameters.length === 0 ? (
+                  <p className="text-sm text-slate-400 italic">
+                    No parameters yet for <span className="font-mono">{pkg.crop_cosh_id}</span>.
+                    Add one below (e.g. Irrigation) and give it a couple of variables
+                    (e.g. Drip, Flood).
+                  </p>
+                ) : parameters.map(param => {
+                  const vars = variablesByParam[param.id] || []
+                  const assignedId = getAssignedVariableId(param.id)
+                  return (
+                    <div key={param.id} className="flex items-center gap-3 py-2 border-b border-slate-50 last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-700 truncate">{param.name}</p>
+                        {vars.length === 0 ? (
+                          <p className="text-[11px] text-slate-400 italic mt-0.5">
+                            no variables — add at least two to be assignable
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            {vars.length} variable{vars.length === 1 ? '' : 's'}: {vars.map(v => v.name).join(', ')}
+                          </p>
+                        )}
+                      </div>
+                      <select
+                        value={assignedId}
+                        onChange={e => handleAssignVariable(param.id, e.target.value)}
+                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+                        <option value="">— not set —</option>
+                        {vars.map(v => (
+                          <option key={v.id} value={v.id}>{v.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => {
+                          setNewVarForParamId(newVarForParamId === param.id ? null : param.id)
+                          setNewVarName('')
+                        }}
+                        className="text-xs text-blue-600 hover:underline">
+                        {newVarForParamId === param.id ? 'Cancel' : '+ Variable'}
+                      </button>
+                    </div>
+                  )
+                })}
+
+                {newVarForParamId && (
+                  <div className="flex items-center gap-2 pt-2">
+                    <input
+                      value={newVarName}
+                      onChange={e => setNewVarName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleAddVariable(newVarForParamId) }}
+                      autoFocus
+                      placeholder="New variable name (e.g. Drip)"
+                      className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <button onClick={() => handleAddVariable(newVarForParamId)}
+                      disabled={!newVarName.trim()}
+                      className="text-xs font-semibold bg-blue-600 text-white px-3 py-1.5 rounded-lg disabled:opacity-50">
+                      Add
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-3 border-t border-slate-50">
+                  <input
+                    value={newParamName}
+                    onChange={e => setNewParamName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleAddParameter() }}
+                    placeholder="New parameter name (e.g. Irrigation)"
+                    className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <button onClick={handleAddParameter}
+                    disabled={!newParamName.trim()}
+                    className="text-sm font-medium px-3 py-1.5 rounded-lg border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-50">
+                    + Parameter
+                  </button>
+                </div>
+
+                {pvSaveError && <p className="text-xs text-red-600">{pvSaveError}</p>}
+              </div>
+
+              <div className="p-4 border-t border-slate-100 flex justify-end">
+                <button onClick={() => setShowSignature(false)}
+                  className="text-sm font-medium text-slate-700 px-4 py-2 rounded-xl hover:bg-slate-50">
+                  Done
+                </button>
+              </div>
             </div>
           </div>
         )}
