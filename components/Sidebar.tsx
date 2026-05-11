@@ -107,7 +107,10 @@ const ALL_NAV: NavItem[] = [
   { href: '/sync',                 label: 'Sync Log',           Icon: IconRefresh,    roles: ['SA'],              group: 'PLATFORM' },
   { href: '/cosh-crops',           label: 'Cosh Crops',         Icon: IconLeaf,       roles: ['SA', 'CM'],        group: 'PLATFORM' },
   // CONTENT
-  { href: '/advisory/global',      label: 'Global CCA Library', Icon: IconBook,       roles: ['SA', 'CM'],        group: 'CONTENT' },
+  { href: '/advisory/global/crops',     label: 'CCA · Crops',      Icon: IconBook, roles: ['SA', 'CM'], group: 'CONTENT' },
+  { href: '/advisory/global/packages',  label: 'CCA · Packages',   Icon: IconBook, roles: ['SA', 'CM'], group: 'CONTENT' },
+  { href: '/advisory/global/timelines', label: 'CCA · Timelines',  Icon: IconBook, roles: ['SA', 'CM'], group: 'CONTENT' },
+  { href: '/advisory/global/practices', label: 'CCA · Practices',  Icon: IconBook, roles: ['SA', 'CM'], group: 'CONTENT' },
   { href: '/cha/global',           label: 'Global CHA Library', Icon: IconBeaker,     roles: ['SA', 'CM'],        group: 'CONTENT' },
   { href: '/crop-health-crops',    label: 'Crop Health',        Icon: IconLeaf,       roles: ['SA', 'CM'],        group: 'CONTENT' },
   { href: '/brand-handling',       label: 'Brand Handling',     Icon: IconTag,        roles: ['SA', 'CM'],        group: 'CONTENT' },
