@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
+import { extractErrorMessage } from '@/lib/errors'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
@@ -143,8 +144,7 @@ export default function ClientDetailPage() {
       await api.put(`/admin/clients/${clientId}/approve`)
       load()
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } }
-      alert(err.response?.data?.detail || 'Failed to approve')
+      alert(extractErrorMessage(e, 'Failed to approve'))
     } finally { setActing(false) }
   }
 

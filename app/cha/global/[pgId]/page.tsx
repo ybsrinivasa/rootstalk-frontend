@@ -3,6 +3,7 @@ import { useEffect, useState, FormEvent } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
+import { extractErrorMessage } from '@/lib/errors'
 
 interface PGRec { id: string; problem_group_cosh_id: string; application_type: string; status: string; version: number }
 interface PGTimeline { id: string; pg_recommendation_id: string; name: string; from_type: string; from_value: number; to_value: number }
@@ -95,8 +96,7 @@ export default function GlobalPGDetailPage() {
       setTlForm({ name: '', from_type: 'DAYS_AFTER_DETECTION', from_value: '0', to_value: '7' })
       setTimelines(tls => [...tls, data])
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setTlError(msg || 'Failed.')
+      setTlError(extractErrorMessage(err, 'Failed to add timeline.'))
     } finally { setAddingTL(false) }
   }
 
@@ -114,8 +114,7 @@ export default function GlobalPGDetailPage() {
       setPracticeForm({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
       loadPractices(showAddPractice)
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setPracticeError(msg || 'Failed.')
+      setPracticeError(extractErrorMessage(err, 'Failed to add practice.'))
     } finally { setAddingPractice(false) }
   }
 

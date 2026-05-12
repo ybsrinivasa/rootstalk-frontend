@@ -3,6 +3,7 @@ import { useEffect, useState, FormEvent } from 'react'
 import Link from 'next/link'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
+import { extractErrorMessage } from '@/lib/errors'
 
 interface PGRec {
   id: string; problem_group_cosh_id: string; application_type: string
@@ -42,8 +43,7 @@ export default function GlobalCHAPage() {
       setForm({ problem_group_cosh_id: '', application_type: 'SPRAY' })
       load()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg || 'Failed to create.')
+      setError(extractErrorMessage(err, 'Failed to create.'))
     } finally { setCreating(false) }
   }
 

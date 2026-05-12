@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 import Link from 'next/link'
+import { extractErrorMessage } from '@/lib/errors'
 
 type Client = {
   id: string; full_name: string; short_name: string; ca_name: string
@@ -64,8 +65,7 @@ export default function ClientsPage() {
       setLink(data.onboarding_link)
       load()
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } }
-      setError(err.response?.data?.detail || 'Failed')
+      setError(extractErrorMessage(e, 'Failed'))
     } finally { setSaving(false) }
   }
 

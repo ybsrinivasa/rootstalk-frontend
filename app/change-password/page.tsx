@@ -3,6 +3,7 @@ import { useState, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
+import { extractErrorMessage } from '@/lib/errors'
 
 export default function ChangePasswordPage() {
   const router = useRouter()
@@ -25,8 +26,7 @@ export default function ChangePasswordPage() {
       setSuccess('Password changed successfully.')
       setForm({ current_password: '', new_password: '', confirm: '' })
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg || 'Failed to change password')
+      setError(extractErrorMessage(err, 'Failed to change password'))
     } finally { setLoading(false) }
   }
 
