@@ -169,21 +169,24 @@ export default function GlobalPackageDetailPage() {
   const [l2Spec, setL2Spec] = useState<L2ElementField[]>([])
   const [elementValues, setElementValues] = useState<Record<string, string>>({})
   useEffect(() => {
-    if (!practiceForm.l2_type) {
+    if (!practiceForm.l2_type || !pkg) {
       setL2Spec([]); setElementValues({}); return
     }
+    // Pass the package's crop_cosh_id so the backend can scope
+    // plant-wise dosage extras to PLANT_WISE crops only. AREA_WISE
+    // and unclassified crops won't see VOLUME_PER_PLANT fields.
+    const qs = new URLSearchParams({ crop_cosh_id: pkg.crop_cosh_id })
     api.get<{ elements: L2ElementField[] }>(
-      `/practice-taxonomy/elements/${encodeURIComponent(practiceForm.l2_type)}`,
+      `/practice-taxonomy/elements/${encodeURIComponent(practiceForm.l2_type)}?${qs}`,
     )
       .then(r => {
         setL2Spec(r.data.elements)
-        // Reset value map to a clean slate keyed by the new spec.
         const fresh: Record<string, string> = {}
         for (const f of r.data.elements) fresh[f.name] = ''
         setElementValues(fresh)
       })
       .catch(() => { setL2Spec([]); setElementValues({}) })
-  }, [practiceForm.l2_type])
+  }, [practiceForm.l2_type, pkg?.crop_cosh_id, pkg])
 
   // Helper: source-string → input variant. cosh_core / cosh_cascade
   // fall back to free text until Cosh ships the dropdown data
