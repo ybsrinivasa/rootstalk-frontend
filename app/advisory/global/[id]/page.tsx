@@ -200,6 +200,13 @@ export default function GlobalPackageDetailPage() {
   // the elements[] payload (see handleAddPractice).
   const [l2Spec, setL2Spec] = useState<L2ElementField[]>([])
   const [elementValues, setElementValues] = useState<Record<string, string>>({})
+  // L2-level flags from the rule book (Batch 25). Used to gate UI
+  // affordances that only apply to specific L2s — e.g. the Special
+  // Input checkbox should appear only for L2s with is_special_input
+  // (ADJUVANTS today).
+  const [l2Meta, setL2Meta] = useState<{ is_special_input: boolean; frequency_based: boolean }>({
+    is_special_input: false, frequency_based: false,
+  })
 
   // Cosh option lists for the cascading dropdowns. Keyed by
   // field.name (e.g. COMMON_NAME, BRAND_NAME, MANUFACTURER,
@@ -208,13 +215,15 @@ export default function GlobalPackageDetailPage() {
 
   useEffect(() => {
     if (!practiceForm.l2_type || !pkg) {
-      setL2Spec([]); setElementValues({}); setOptionsByField({}); return
+      setL2Spec([]); setElementValues({}); setOptionsByField({})
+      setL2Meta({ is_special_input: false, frequency_based: false })
+      return
     }
     // Pass the package's crop_cosh_id so the backend can scope
     // plant-wise dosage extras to PLANT_WISE crops only. AREA_WISE
     // and unclassified crops won't see VOLUME_PER_PLANT fields.
     const qs = new URLSearchParams({ crop_cosh_id: pkg.crop_cosh_id })
-    api.get<{ elements: L2ElementField[] }>(
+    api.get<{ elements: L2ElementField[]; is_special_input?: boolean; frequency_based?: boolean }>(
       `/practice-taxonomy/elements/${encodeURIComponent(practiceForm.l2_type)}?${qs}`,
     )
       .then(r => {
@@ -223,8 +232,15 @@ export default function GlobalPackageDetailPage() {
         for (const f of r.data.elements) fresh[f.name] = ''
         setElementValues(fresh)
         setOptionsByField({})
+        setL2Meta({
+          is_special_input: !!r.data.is_special_input,
+          frequency_based: !!r.data.frequency_based,
+        })
       })
-      .catch(() => { setL2Spec([]); setElementValues({}); setOptionsByField({}) })
+      .catch(() => {
+        setL2Spec([]); setElementValues({}); setOptionsByField({})
+        setL2Meta({ is_special_input: false, frequency_based: false })
+      })
   }, [practiceForm.l2_type, pkg?.crop_cosh_id, pkg])
 
   // Fetch L2-level dropdowns (no cascade parent) when l2Spec lands.
@@ -1001,7 +1017,12 @@ export default function GlobalPackageDetailPage() {
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1.5">L2 (specific)</label>
                     <select value={practiceForm.l2_type}
-                      onChange={e => setPracticeForm(f => ({ ...f, l2_type: e.target.value }))}
+                      onChange={e => setPracticeForm(f => ({
+                        ...f, l2_type: e.target.value,
+                        // Reset is_special_input when L2 changes; the
+                        // new L2 may not even surface the checkbox.
+                        is_special_input: false,
+                      }))}
                       disabled={!currentL1}
                       className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-slate-50 disabled:text-slate-400">
                       <option value="">— Select specific —</option>
@@ -1093,12 +1114,14 @@ export default function GlobalPackageDetailPage() {
                   </div>
                 )}
 
-                <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
-                  <input type="checkbox" checked={practiceForm.is_special_input}
-                    onChange={e => setPracticeForm(f => ({ ...f, is_special_input: e.target.checked }))}
-                    className="w-4 h-4 rounded" />
-                  Special input (adjuvant — never suppressed by BL-03)
-                </label>
+                {l2Meta.is_special_input && (
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
+                    <input type="checkbox" checked={practiceForm.is_special_input}
+                      onChange={e => setPracticeForm(f => ({ ...f, is_special_input: e.target.checked }))}
+                      className="w-4 h-4 rounded" />
+                    Special input (adjuvant — never suppressed by BL-03)
+                  </label>
+                )}
                 {practiceError && <p className="text-sm text-red-600">{practiceError}</p>}
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => { setShowAddPractice(null); setPracticeError('') }}

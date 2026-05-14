@@ -217,17 +217,30 @@ function GlobalPackagesContent() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">Crop</label>
-                <select value={form.crop_cosh_id}
-                  onChange={e => setForm(f => ({ ...f, crop_cosh_id: e.target.value }))}
-                  required
-                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-                  <option value="">— Select a crop —</option>
-                  {coshCrops.map(c => (
-                    <option key={c.cosh_id} value={c.cosh_id}>{c.name_en}</option>
-                  ))}
-                </select>
+                {cropFilter ? (
+                  // SE entered from the Crops page with a specific crop
+                  // pinned. Show as read-only so they can't accidentally
+                  // create a package under the wrong crop. Per user
+                  // 2026-05-14 — the Crops → Packages hierarchy is the
+                  // only authoring path; the dropdown is redundant here.
+                  <div className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm bg-slate-50 text-slate-700">
+                    {activeCropName}
+                  </div>
+                ) : (
+                  <select value={form.crop_cosh_id}
+                    onChange={e => setForm(f => ({ ...f, crop_cosh_id: e.target.value }))}
+                    required
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                    <option value="">— Select a crop —</option>
+                    {coshCrops.map(c => (
+                      <option key={c.cosh_id} value={c.cosh_id}>{c.name_en}</option>
+                    ))}
+                  </select>
+                )}
                 <p className="text-[11px] text-slate-400 mt-1">
-                  All Cosh-classified crops. Curated upstream — appears here on next sync.
+                  {cropFilter
+                    ? 'Locked to the crop you came in from. Go back to the Crops page to switch.'
+                    : 'All Cosh-classified crops. Curated upstream — appears here on next sync.'}
                 </p>
               </div>
               <div>
