@@ -232,10 +232,17 @@ export default function GlobalPackageDetailPage() {
         for (const f of r.data.elements) fresh[f.name] = ''
         setElementValues(fresh)
         setOptionsByField({})
-        setL2Meta({
+        const newMeta = {
           is_special_input: !!r.data.is_special_input,
           frequency_based: !!r.data.frequency_based,
-        })
+        }
+        setL2Meta(newMeta)
+        // Default-check the Special Input box for L2s where it applies
+        // (ADJUVANTS today). Standalone adjuvant recommendations don't
+        // make practical sense — adjuvants ride along with every host
+        // input — so pre-checking is the correct default per user
+        // 2026-05-14. SE can still uncheck for any edge case.
+        setPracticeForm(prev => ({ ...prev, is_special_input: newMeta.is_special_input }))
       })
       .catch(() => {
         setL2Spec([]); setElementValues({}); setOptionsByField({})
