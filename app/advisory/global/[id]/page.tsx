@@ -714,12 +714,25 @@ export default function GlobalPackageDetailPage() {
       }
     }
 
+    // Batch 34: derive frequency_days from the L2's interval field
+    // (FERTIGATION_INTERVAL / IRRIGATION_INTERVAL / REPEAT_INTERVAL).
+    // Validator checks Practice.frequency_days matches the interval
+    // element value, so we send both atomically.
+    let frequency_days: number | null = null
+    const intervalField = l2Spec.find(f => f.name.endsWith('_INTERVAL') && f.source === 'number_2dec')
+    if (intervalField) {
+      const raw = elementValues[intervalField.name]
+      const parsed = raw ? parseInt(raw, 10) : NaN
+      if (!Number.isNaN(parsed)) frequency_days = parsed
+    }
+
     const body = {
       l0_type: practiceForm.l0_type,
       l1_type: practiceForm.l1_type || null,
       l2_type: practiceForm.l2_type || null,
       display_order: parseInt(practiceForm.display_order),
       is_special_input: practiceForm.is_special_input,
+      frequency_days,
       elements,
     }
 
@@ -1354,6 +1367,38 @@ export default function GlobalPackageDetailPage() {
                     {l2Spec.map(field => {
                       const variant = elementInputVariant(field.source)
                       if (variant === 'auto') {
+                        // Batch 34: NUMBER_OF_APPLICATIONS is auto but
+                        // computed client-side from the interval + the
+                        // active timeline's from/to so the SE sees the
+                        // count update live as they type the interval.
+                        // Backend recomputes server-side and gates
+                        // submit at N < 2.
+                        if (field.name === 'NUMBER_OF_APPLICATIONS') {
+                          const tl = timelines.find(t => t.id === showAddPractice)
+                          const intervalF = l2Spec.find(f => f.name.endsWith('_INTERVAL') && f.source === 'number_2dec')
+                          const rawInterval = intervalF ? (elementValues[intervalF.name] || '') : ''
+                          const interval = rawInterval ? parseInt(rawInterval, 10) : NaN
+                          let n: number | null = null
+                          if (tl && !Number.isNaN(interval) && interval > 0) {
+                            const duration = Math.abs(tl.to_value - tl.from_value)
+                            if (duration >= 1) n = Math.floor((duration - 1) / interval) + 1
+                          }
+                          return (
+                            <div key={field.name}>
+                              <label className="block text-xs font-medium text-slate-700 mb-1">{field.label}</label>
+                              <div className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-700">
+                                {n === null
+                                  ? <span className="text-slate-400 italic">set the interval above to see the count</span>
+                                  : <>{n} application{n === 1 ? '' : 's'} <span className="text-slate-400">(first on Day {(timelines.find(t => t.id === showAddPractice)?.from_value || 0) + 1}, then every {interval} day{interval === 1 ? '' : 's'})</span></>}
+                              </div>
+                              {n !== null && n < 2 && (
+                                <p className="text-[11px] text-red-600 mt-1">
+                                  Interval too long for this timeline — frequency practices repeat at least twice. Shorten the interval or extend the timeline window.
+                                </p>
+                              )}
+                            </div>
+                          )
+                        }
                         return (
                           <div key={field.name} className="text-xs text-slate-400 italic">
                             {field.label} — auto-calculated server-side
