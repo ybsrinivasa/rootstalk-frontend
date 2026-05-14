@@ -207,6 +207,11 @@ export default function GlobalPackageDetailPage() {
   const [practiceForm, setPracticeForm] = useState({
     l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false,
   })
+  // Batch 33: when set, the Practice modal opens in EDIT mode pre-
+  // filled with this Practice's current values; Submit issues PUT
+  // instead of POST. Carries the timeline_id alongside since the
+  // PUT URL needs both ids.
+  const [editingPractice, setEditingPractice] = useState<{ timelineId: string; practice: Practice } | null>(null)
 
   // Practice taxonomy — loaded once from /practice-taxonomy; drives
   // the cascading L0 / L1 / L2 dropdowns in the Add Practice modal.
@@ -253,7 +258,14 @@ export default function GlobalPackageDetailPage() {
       .then(r => {
         setL2Spec(r.data.elements)
         const fresh: Record<string, string> = {}
-        for (const f of r.data.elements) fresh[f.name] = ''
+        const existing = editingPractice?.practice.elements || []
+        for (const f of r.data.elements) {
+          // Batch 33: in edit mode, seed each spec field from the
+          // practice's stored element (cosh_ref or value); fall back
+          // to blank for new fields not present in the original.
+          const match = existing.find(e => e.element_type === f.name)
+          fresh[f.name] = match?.cosh_ref || match?.value || ''
+        }
         setElementValues(fresh)
         setOptionsByField({})
         const newMeta = {
@@ -265,8 +277,15 @@ export default function GlobalPackageDetailPage() {
         // (ADJUVANTS today). Standalone adjuvant recommendations don't
         // make practical sense — adjuvants ride along with every host
         // input — so pre-checking is the correct default per user
-        // 2026-05-14. SE can still uncheck for any edge case.
-        setPracticeForm(prev => ({ ...prev, is_special_input: newMeta.is_special_input }))
+        // 2026-05-14. SE can still uncheck for any edge case. In
+        // edit mode, prefer the practice's stored value over the
+        // default so an explicit uncheck round-trips.
+        setPracticeForm(prev => ({
+          ...prev,
+          is_special_input: editingPractice
+            ? editingPractice.practice.is_special_input
+            : newMeta.is_special_input,
+        }))
       })
       .catch(() => {
         setL2Spec([]); setElementValues({}); setOptionsByField({})
@@ -400,20 +419,43 @@ export default function GlobalPackageDetailPage() {
   // BRAND_NAME wipes FORMULATION / AI_CONCENTRATION (their previous
   // narrowed value is now stale).
   function setElementValue(fieldName: string, value: string) {
-    const cnChildren = ['MANUFACTURER', 'BRAND_NAME', 'FORMULATION', 'AI_CONCENTRATION']
-    const tnChildren = ['FORMULATION', 'AI_CONCENTRATION']
-    const childrenToClear = fieldName === 'COMMON_NAME' ? cnChildren
-      : fieldName === 'BRAND_NAME' ? tnChildren
-        : []
+    // Batch 33: per user 2026-05-14, tighten the cascade-clear rules.
+    // Changing a parent invalidates downstream fields that were
+    // implicitly bound to it. INSTRUCTIONS never auto-clears (it's
+    // free-text the SE wrote against the previous picks; preserving
+    // it across edits avoids accidental loss). APPLICATION_METHOD is
+    // L2-scoped (not CN-scoped), but per user spec it's still
+    // cleared when CN/TN/MFR changes — a different product may
+    // warrant a different application method.
+    //
+    // The OPTION-list clear (drops cached dropdown options) only
+    // applies to fields whose options are CN-driven (MFR, TN, F,
+    // AI); APPLICATION_METHOD + DOSAGE_UNIT options come from the
+    // L2-level fetch and stay valid.
+    const cascadeValuesToClear: Record<string, string[]> = {
+      COMMON_NAME:      ['MANUFACTURER', 'BRAND_NAME', 'FORMULATION', 'AI_CONCENTRATION', 'APPLICATION_METHOD', 'DOSAGE', 'DOSAGE_UNIT'],
+      MANUFACTURER:     ['BRAND_NAME', 'FORMULATION', 'AI_CONCENTRATION', 'APPLICATION_METHOD', 'DOSAGE', 'DOSAGE_UNIT'],
+      BRAND_NAME:       ['MANUFACTURER', 'FORMULATION', 'AI_CONCENTRATION', 'APPLICATION_METHOD', 'DOSAGE', 'DOSAGE_UNIT'],
+      FORMULATION:      ['AI_CONCENTRATION', 'DOSAGE', 'DOSAGE_UNIT'],
+      AI_CONCENTRATION: ['DOSAGE', 'DOSAGE_UNIT'],
+    }
+    // CN-driven options that should drop their cached lists when the
+    // parent value clears (so the dropdown shows fresh CN-scope on
+    // next pick rather than a stale narrowed set).
+    const cnDrivenOptions = ['MANUFACTURER', 'BRAND_NAME', 'FORMULATION', 'AI_CONCENTRATION']
+
+    const valuesToClear = cascadeValuesToClear[fieldName] || []
     setElementValues(prev => {
       const next = { ...prev, [fieldName]: value }
-      for (const c of childrenToClear) if (c in next) next[c] = ''
+      for (const c of valuesToClear) if (c in next) next[c] = ''
       return next
     })
-    if (childrenToClear.length > 0 && !value) {
+    if (valuesToClear.length > 0 && !value) {
       setOptionsByField(prev => {
         const next = { ...prev }
-        for (const c of childrenToClear) delete next[c]
+        for (const c of cnDrivenOptions) {
+          if (valuesToClear.includes(c)) delete next[c]
+        }
         return next
       })
     }
@@ -630,6 +672,23 @@ export default function GlobalPackageDetailPage() {
     if (expanded === tl.id) setExpanded(null)
   }
 
+  function openEditPractice(timelineId: string, p: Practice) {
+    // Batch 33: open the Add Practice modal in edit mode. We seed
+    // practiceForm from p; the L2-fetch effect (which fires when
+    // practiceForm.l2_type lands a new value) then seeds elementValues
+    // from p.elements (see the existing .then callback).
+    setEditingPractice({ timelineId, practice: p })
+    setPracticeError('')
+    setPracticeForm({
+      l0_type: p.l0_type,
+      l1_type: p.l1_type || '',
+      l2_type: p.l2_type || '',
+      display_order: String(p.display_order),
+      is_special_input: p.is_special_input,
+    })
+    setShowAddPractice(timelineId)
+  }
+
   async function handleAddPractice(e: FormEvent) {
     e.preventDefault()
     if (!showAddPractice) return
@@ -655,21 +714,35 @@ export default function GlobalPackageDetailPage() {
       }
     }
 
+    const body = {
+      l0_type: practiceForm.l0_type,
+      l1_type: practiceForm.l1_type || null,
+      l2_type: practiceForm.l2_type || null,
+      display_order: parseInt(practiceForm.display_order),
+      is_special_input: practiceForm.is_special_input,
+      elements,
+    }
+
     try {
-      await api.post(`/advisory/global/packages/${id}/timelines/${showAddPractice}/practices`, {
-        l0_type: practiceForm.l0_type,
-        l1_type: practiceForm.l1_type || null,
-        l2_type: practiceForm.l2_type || null,
-        display_order: parseInt(practiceForm.display_order),
-        is_special_input: practiceForm.is_special_input,
-        elements,
-      })
+      if (editingPractice) {
+        await api.put(
+          `/advisory/global/packages/${id}/timelines/${editingPractice.timelineId}/practices/${editingPractice.practice.id}`,
+          body,
+        )
+      } else {
+        await api.post(
+          `/advisory/global/packages/${id}/timelines/${showAddPractice}/practices`,
+          body,
+        )
+      }
+      const tlId = showAddPractice  // capture before reset
       setShowAddPractice(null)
+      setEditingPractice(null)
       setPracticeForm({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
       setL2Spec([]); setElementValues({})
-      loadPractices(showAddPractice)
+      loadPractices(tlId)
     } catch (err: unknown) {
-      setPracticeError(extractErrorMessage(err, 'Failed to add practice.'))
+      setPracticeError(extractErrorMessage(err, editingPractice ? 'Failed to update practice.' : 'Failed to add practice.'))
     } finally { setAddingPractice(false) }
   }
 
@@ -1054,6 +1127,12 @@ export default function GlobalPackageDetailPage() {
                                   <span className="text-[11px] text-slate-400">
                                     {hasElements ? `${p.elements!.length} element${p.elements!.length === 1 ? '' : 's'}` : 'no elements'}
                                   </span>
+                                  <button onClick={e => { e.stopPropagation(); openEditPractice(tl.id, p) }}
+                                    className="text-slate-300 hover:text-blue-500 p-1" title="Edit practice">
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                    </svg>
+                                  </button>
                                   <button onClick={e => { e.stopPropagation(); handleDeletePractice(tl.id, p.id) }}
                                     className="text-slate-300 hover:text-red-400 p-1" title="Delete practice">
                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1204,12 +1283,17 @@ export default function GlobalPackageDetailPage() {
           </div>
         )}
 
-        {/* Add Practice Modal */}
+        {/* Add Practice Modal — also serves Edit mode (Batch 33) when
+            editingPractice is set. Submit routes POST vs PUT inside
+            handleAddPractice; the only UX cues that flip are the
+            title + Submit label. */}
         {showAddPractice && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90vh] flex flex-col">
               <div className="p-6 border-b border-slate-100">
-                <h2 className="font-bold text-slate-900">Add Practice</h2>
+                <h2 className="font-bold text-slate-900">
+                  {editingPractice ? 'Edit Practice' : 'Add Practice'}
+                </h2>
               </div>
               <form onSubmit={handleAddPractice} className="p-6 space-y-4 overflow-y-auto">
                 <div>
@@ -1351,12 +1435,14 @@ export default function GlobalPackageDetailPage() {
                 )}
                 {practiceError && <p className="text-sm text-red-600">{practiceError}</p>}
                 <div className="flex gap-3 pt-2">
-                  <button type="button" onClick={() => { setShowAddPractice(null); setPracticeError('') }}
+                  <button type="button" onClick={() => { setShowAddPractice(null); setEditingPractice(null); setPracticeError('') }}
                     className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
                   <button type="submit"
                     disabled={addingPractice || !practiceForm.l1_type || !practiceForm.l2_type}
                     className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
-                    {addingPractice ? 'Adding…' : 'Add Practice'}
+                    {addingPractice
+                      ? (editingPractice ? 'Saving…' : 'Adding…')
+                      : (editingPractice ? 'Save Changes' : 'Add Practice')}
                   </button>
                 </div>
               </form>
