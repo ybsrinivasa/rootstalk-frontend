@@ -465,8 +465,9 @@ export default function GlobalPackageDetailPage() {
   }
 
   // Helper: source-string → input variant.
-  function elementInputVariant(source: string): 'text' | 'textarea' | 'number' | 'media' | 'auto' | 'select' {
+  function elementInputVariant(source: string): 'text' | 'textarea' | 'number' | 'media' | 'hyperlink' | 'auto' | 'select' {
     if (source === 'auto_calculated') return 'auto'
+    if (source === 'hyperlink') return 'hyperlink'
     if (source.startsWith('media_')) return 'media'
     if (source.startsWith('number_')) return 'number'
     if (source === 'text_area') return 'textarea'
@@ -478,6 +479,100 @@ export default function GlobalPackageDetailPage() {
     if (source.startsWith('cosh_core:')) return ` (Cosh: ${source.slice(10)})`
     if (source.startsWith('cosh_cascade:')) return ` (Cosh cascade: ${source.slice(13)})`
     return ''
+  }
+
+  // ── Media upload helpers (Batch 36, 2026-05-14) ───────────────────────────
+  // Per-field upload-in-progress flag so the SE sees a spinner on the
+  // exact widget they're acting on. Keyed by L2-spec field.name.
+  const [uploadingByField, setUploadingByField] = useState<Record<string, boolean>>({})
+
+  async function uploadMediaFile(fieldName: string, file: File, folder: string): Promise<void> {
+    setUploadingByField(s => ({ ...s, [fieldName]: true }))
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('folder', folder)
+      const { data } = await api.post<{ url: string; key: string }>('/media/upload', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setElementValue(fieldName, data.url)
+    } finally {
+      setUploadingByField(s => ({ ...s, [fieldName]: false }))
+    }
+  }
+
+  // ── Hyperlink preview (Batch 36) ─────────────────────────────────────────
+  // Light WhatsApp-style preview: extract a YouTube/Vimeo video ID
+  // from a URL and surface the thumbnail + play overlay. Everything
+  // else falls back to a domain card. Full Open Graph preview for
+  // arbitrary URLs would need a backend proxy and is deferred.
+  function previewFromUrl(url: string): { kind: 'youtube' | 'vimeo' | 'generic'; thumb: string | null; host: string } {
+    try {
+      const u = new URL(url)
+      const host = u.hostname.replace(/^www\./, '')
+      // YouTube — long form (youtube.com/watch?v=ID, /embed/ID, /shorts/ID) and short form (youtu.be/ID)
+      let ytId: string | null = null
+      if (host === 'youtu.be') ytId = u.pathname.slice(1).split('/')[0] || null
+      else if (host.endsWith('youtube.com')) {
+        const v = u.searchParams.get('v')
+        if (v) ytId = v
+        else {
+          const m = u.pathname.match(/^\/(embed|shorts)\/([^/?#]+)/)
+          if (m) ytId = m[2]
+        }
+      }
+      if (ytId && /^[A-Za-z0-9_-]{6,15}$/.test(ytId)) {
+        return { kind: 'youtube', thumb: `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`, host }
+      }
+      // Vimeo — vimeo.com/<numeric id> path.
+      if (host.endsWith('vimeo.com')) {
+        const m = u.pathname.match(/^\/(\d{5,})/)
+        if (m) {
+          // Vimeo's i.vimeocdn.com thumbnails need a per-video lookup
+          // we don't proxy yet — fall back to the generic card with
+          // the vimeo host so the SE still gets visual confirmation.
+          return { kind: 'vimeo', thumb: null, host }
+        }
+      }
+      return { kind: 'generic', thumb: null, host }
+    } catch {
+      return { kind: 'generic', thumb: null, host: '' }
+    }
+  }
+
+  function HyperlinkPreview({ url }: { url: string }) {
+    if (!url.trim()) return null
+    const p = previewFromUrl(url.trim())
+    if (p.kind === 'youtube' && p.thumb) {
+      return (
+        <a href={url} target="_blank" rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-3 border border-slate-200 rounded-xl overflow-hidden hover:border-blue-400 transition-colors max-w-sm">
+          <div className="relative w-32 aspect-video bg-slate-100 shrink-0">
+            <img src={p.thumb} alt="" className="w-full h-full object-cover" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-9 h-9 rounded-full bg-black/60 flex items-center justify-center">
+                <svg className="w-4 h-4 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div className="py-2 pr-3 min-w-0">
+            <p className="text-xs font-medium text-slate-700 truncate">YouTube video</p>
+            <p className="text-[11px] text-slate-400 truncate">{p.host}</p>
+          </div>
+        </a>
+      )
+    }
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer"
+        className="mt-2 inline-flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2 hover:border-blue-400 transition-colors text-xs text-slate-600">
+        <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+        </svg>
+        <span className="truncate max-w-[220px]">{p.host || url}</span>
+      </a>
+    )
   }
 
   const [showPushModal, setShowPushModal] = useState(false)
@@ -707,12 +802,15 @@ export default function GlobalPackageDetailPage() {
     const elements: { element_type: string; value?: string; cosh_ref?: string; unit_cosh_id?: string }[] = []
     for (const field of l2Spec) {
       const variant = elementInputVariant(field.source)
-      if (variant === 'auto' || variant === 'media') continue
+      if (variant === 'auto') continue
       const raw = elementValues[field.name]
       if (raw === undefined || raw.trim() === '') continue
       if (variant === 'select') {
         elements.push({ element_type: field.name, cosh_ref: raw.trim() })
       } else {
+        // text / textarea / number / media / hyperlink — all carry
+        // their string value (media stores the S3 URL returned by
+        // /media/upload; hyperlink stores the URL the SE pasted).
         elements.push({ element_type: field.name, value: raw.trim() })
       }
     }
@@ -1162,14 +1260,36 @@ export default function GlobalPackageDetailPage() {
                                 </div>
                                 {isExpanded && (
                                   <div className="ml-2 pl-3 border-l-2 border-slate-100 py-2 space-y-1 mb-2">
-                                    {hasElements ? p.elements!.map(el => (
-                                      <div key={el.element_type} className="flex items-baseline gap-2 text-xs">
-                                        <span className="text-slate-500 min-w-[140px]">{el.label}:</span>
-                                        <span className="text-slate-800 font-medium">
-                                          {el.display_value || <span className="text-slate-300 italic">—</span>}
-                                        </span>
-                                      </div>
-                                    )) : (
+                                    {hasElements ? p.elements!.map(el => {
+                                      // Batch 36 — media element types render
+                                      // an inline preview instead of the
+                                      // raw URL. UPLOAD_IMAGE → thumbnail,
+                                      // UPLOAD_AUDIO → audio player,
+                                      // HYPERLINK → preview card.
+                                      const url = el.value || ''
+                                      const isImg = el.element_type === 'UPLOAD_IMAGE' && url
+                                      const isAud = el.element_type === 'UPLOAD_AUDIO' && url
+                                      const isLnk = el.element_type === 'HYPERLINK' && url
+                                      return (
+                                        <div key={el.element_type} className={isImg || isAud || isLnk ? "flex items-start gap-2 text-xs" : "flex items-baseline gap-2 text-xs"}>
+                                          <span className="text-slate-500 min-w-[140px] shrink-0">{el.label}:</span>
+                                          <span className="text-slate-800 font-medium min-w-0">
+                                            {isImg ? (
+                                              <a href={url} target="_blank" rel="noopener noreferrer">
+                                                <img src={url} alt="" className="max-h-28 rounded border border-slate-200" />
+                                              </a>
+                                            ) : isAud ? (
+                                              // eslint-disable-next-line jsx-a11y/media-has-caption
+                                              <audio controls src={url} className="max-w-xs" />
+                                            ) : isLnk ? (
+                                              <HyperlinkPreview url={url} />
+                                            ) : (
+                                              el.display_value || <span className="text-slate-300 italic">—</span>
+                                            )}
+                                          </span>
+                                        </div>
+                                      )
+                                    }) : (
                                       <p className="text-xs text-slate-400 italic">No elements on this Practice.</p>
                                     )}
                                   </div>
@@ -1434,9 +1554,61 @@ export default function GlobalPackageDetailPage() {
                         )
                       }
                       if (variant === 'media') {
+                        // Batch 36: real upload widget. media_image →
+                        // image picker + thumbnail preview; media_audio →
+                        // audio picker + <audio> player. Selected file
+                        // posts to /media/upload; the returned S3 URL
+                        // becomes the element's stored value.
+                        const isImage = field.source === 'media_image'
+                        const accept = isImage ? 'image/*' : 'audio/*'
+                        const folder = isImage ? 'advisory/images' : 'advisory/audio'
+                        const url = (elementValues[field.name] || '').trim()
+                        const uploading = !!uploadingByField[field.name]
                         return (
-                          <div key={field.name} className="text-xs text-slate-400 italic">
-                            {field.label} — media upload not yet wired (deferred)
+                          <div key={field.name}>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">
+                              {field.label}
+                              {field.mandatory && <span className="text-red-500 ml-0.5">*</span>}
+                            </label>
+                            {url ? (
+                              <div className="border border-slate-200 rounded-lg p-3 space-y-2">
+                                {isImage ? (
+                                  <img src={url} alt="" className="max-h-40 rounded" />
+                                ) : (
+                                  // eslint-disable-next-line jsx-a11y/media-has-caption
+                                  <audio controls src={url} className="w-full" />
+                                )}
+                                <div className="flex items-center justify-between">
+                                  <a href={url} target="_blank" rel="noopener noreferrer"
+                                    className="text-[11px] text-slate-400 truncate max-w-[260px]">{url}</a>
+                                  <button type="button"
+                                    onClick={() => setElementValue(field.name, '')}
+                                    className="text-[11px] text-red-500 hover:underline">Replace</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <label className={`flex items-center gap-2 border border-dashed border-slate-300 rounded-lg px-3 py-3 text-xs cursor-pointer hover:border-blue-400 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                                <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.9 5.5 5.5 0 0110.78 0A4 4 0 0117 16M9 12l3-3m0 0l3 3m-3-3v12" />
+                                </svg>
+                                <span className="text-slate-600">
+                                  {uploading
+                                    ? 'Uploading…'
+                                    : isImage ? 'Choose an image (JPEG/PNG/WebP/GIF · up to 25 MB)'
+                                      : 'Choose an audio file (MP3/AAC/OGG/WAV/WebM · up to 25 MB)'}
+                                </span>
+                                <input type="file" accept={accept} className="hidden"
+                                  onChange={async e => {
+                                    const f = e.target.files?.[0]
+                                    if (!f) return
+                                    try { await uploadMediaFile(field.name, f, folder) }
+                                    catch (err) {
+                                      setPracticeError(extractErrorMessage(err, 'Upload failed.'))
+                                    }
+                                    e.target.value = ''
+                                  }} />
+                              </label>
+                            )}
                           </div>
                         )
                       }
@@ -1448,6 +1620,27 @@ export default function GlobalPackageDetailPage() {
                         </>
                       )
                       const onChange = (v: string) => setElementValue(field.name, v)
+                      if (variant === 'hyperlink') {
+                        // Batch 36: URL input + WhatsApp-style preview
+                        // for YouTube (thumbnail + play overlay), generic
+                        // domain card otherwise. The help text steers
+                        // SEs toward this path for large video files
+                        // they can't upload directly.
+                        const url = elementValues[field.name] || ''
+                        return (
+                          <div key={field.name}>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">{labelText}</label>
+                            <input type="url" placeholder="https://…"
+                              value={url}
+                              onChange={e => onChange(e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                            <p className="text-[11px] text-slate-500 mt-1">
+                              For long videos, upload to YouTube, Google Drive, or similar and paste the link here. YouTube links get a thumbnail preview.
+                            </p>
+                            <HyperlinkPreview url={url} />
+                          </div>
+                        )
+                      }
                       if (variant === 'select') {
                         const opts = optionsByField[field.name]
                         const parentBlocker = field.cascade_from.find(p => !(elementValues[p] || '').trim())
