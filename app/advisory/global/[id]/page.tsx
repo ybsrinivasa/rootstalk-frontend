@@ -613,6 +613,13 @@ export default function GlobalPackageDetailPage() {
   const [editingParamName, setEditingParamName] = useState('')
   const [editingVarKey, setEditingVarKey] = useState<string | null>(null)
   const [editingVarName, setEditingVarName] = useState('')
+  // Batch 37 (2026-05-15): hide-unused toggle for the PV panel. The
+  // panel lists every Parameter for the crop (Cosh-mirrored + Custom),
+  // which is noisy once the SE has made the few assignments that
+  // shape this Package's signature. Off by default so new SEs see
+  // the full list; flipping it on collapses to just the rows the SE
+  // has assigned a variable on for this Package.
+  const [hideUnusedParams, setHideUnusedParams] = useState(false)
 
   const loadTimelines = () =>
     api.get<Timeline[]>(`/advisory/global/packages/${id}/timelines`)
@@ -1938,6 +1945,24 @@ export default function GlobalPackageDetailPage() {
                   Parameters &amp; Variables that distinguish this Package from siblings for the
                   same crop. Deep-copied to every Local on push.
                 </p>
+                {/* Batch 37 — used count + hide-unused toggle. */}
+                {parameters.length > 0 && (() => {
+                  const usedCount = parameters.filter(p => getAssignedVariableId(p.id) !== '').length
+                  return (
+                    <div className="flex items-center justify-between mt-3">
+                      <span className="text-xs text-slate-500">
+                        {usedCount} of {parameters.length} parameter{parameters.length === 1 ? '' : 's'} assigned
+                      </span>
+                      <label className="inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+                        <input type="checkbox"
+                          checked={hideUnusedParams}
+                          onChange={e => setHideUnusedParams(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded" />
+                        Hide unused
+                      </label>
+                    </div>
+                  )
+                })()}
               </div>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-3">
@@ -1947,13 +1972,28 @@ export default function GlobalPackageDetailPage() {
                     Add one below (e.g. Irrigation) and give it a couple of variables
                     (e.g. Drip, Flood).
                   </p>
-                ) : parameters.map(param => {
+                ) : (() => {
+                  const visibleParams = hideUnusedParams
+                    ? parameters.filter(p => getAssignedVariableId(p.id) !== '')
+                    : parameters
+                  if (visibleParams.length === 0) {
+                    // hideUnusedParams is on but nothing is assigned yet.
+                    return (
+                      <p className="text-sm text-slate-400 italic">
+                        No parameters assigned for this Package yet. Uncheck "Hide unused"
+                        above to see all parameters and assign variables.
+                      </p>
+                    )
+                  }
+                  return visibleParams.map(param => {
                   const vars = variablesByParam[param.id] || []
                   const assignedId = getAssignedVariableId(param.id)
+                  const isUsed = assignedId !== ''
                   const isCustom = param.source === 'CUSTOM'
                   const isEditingThisParam = editingParamId === param.id
                   return (
-                    <div key={param.id} className="py-3 border-b border-slate-50 last:border-0">
+                    <div key={param.id}
+                      className={`py-3 last:border-0 ${isUsed ? 'border-b border-green-100 bg-green-50/40 -mx-2 px-2 rounded-lg' : 'border-b border-slate-50'}`}>
                       <div className="flex items-center gap-3">
                         <div className="flex-1 min-w-0">
                           {isEditingThisParam ? (
@@ -1973,6 +2013,11 @@ export default function GlobalPackageDetailPage() {
                               {!isCustom && (
                                 <span className="text-[10px] uppercase tracking-wide bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
                                   Cosh
+                                </span>
+                              )}
+                              {isUsed && (
+                                <span className="text-[10px] uppercase tracking-wide bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
+                                  Used
                                 </span>
                               )}
                             </div>
@@ -2030,12 +2075,16 @@ export default function GlobalPackageDetailPage() {
                           <div className="mt-1.5 ml-1 space-y-1">
                             {coshVars.length > 0 && (
                               <div className="flex flex-wrap gap-1.5 items-center">
-                                {coshVars.map(v => (
-                                  <span key={v.id} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-[11px] rounded-full px-2.5 py-0.5"
-                                    title="From Cosh — read-only">
-                                    {v.name}
-                                  </span>
-                                ))}
+                                {coshVars.map(v => {
+                                  const isAssigned = v.id === assignedId
+                                  return (
+                                    <span key={v.id}
+                                      className={`inline-flex items-center gap-1 text-[11px] rounded-full px-2.5 py-0.5 ${isAssigned ? 'bg-green-100 text-green-800 font-medium ring-1 ring-green-300' : 'bg-blue-50 text-blue-700'}`}
+                                      title={isAssigned ? 'Assigned to this Package' : 'From Cosh — read-only'}>
+                                      {v.name}
+                                    </span>
+                                  )
+                                })}
                               </div>
                             )}
                             {seVars.length > 0 && (
@@ -2043,6 +2092,7 @@ export default function GlobalPackageDetailPage() {
                                 {seVars.map(v => {
                                   const key = `${param.id}:${v.id}`
                                   const editingThis = editingVarKey === key
+                                  const isAssigned = v.id === assignedId
                                   return editingThis ? (
                                     <input key={v.id}
                                       value={editingVarName}
@@ -2055,11 +2105,13 @@ export default function GlobalPackageDetailPage() {
                                       autoFocus
                                       className="border border-blue-300 rounded-full px-2 py-0.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500" />
                                   ) : (
-                                    <span key={v.id} className="inline-flex items-center gap-1 bg-slate-100 text-slate-600 text-[11px] rounded-full pl-2.5 pr-1 py-0.5">
+                                    <span key={v.id}
+                                      className={`inline-flex items-center gap-1 text-[11px] rounded-full pl-2.5 pr-1 py-0.5 ${isAssigned ? 'bg-green-100 text-green-800 font-medium ring-1 ring-green-300' : 'bg-slate-100 text-slate-600'}`}
+                                      title={isAssigned ? 'Assigned to this Package' : undefined}>
                                       <button onClick={() => { setEditingVarKey(key); setEditingVarName(v.name) }}
-                                        className="hover:text-blue-600">{v.name}</button>
+                                        className={isAssigned ? 'hover:text-green-900' : 'hover:text-blue-600'}>{v.name}</button>
                                       <button onClick={() => handleDeleteVariable(param.id, v.id, v.name)}
-                                        className="text-slate-400 hover:text-red-500 ml-0.5 leading-none"
+                                        className={`ml-0.5 leading-none ${isAssigned ? 'text-green-600 hover:text-red-500' : 'text-slate-400 hover:text-red-500'}`}
                                         title="Delete variable">
                                         ×
                                       </button>
@@ -2073,7 +2125,8 @@ export default function GlobalPackageDetailPage() {
                       })()}
                     </div>
                   )
-                })}
+                })
+                })()}
 
                 {newVarForParamId && (
                   <div className="flex items-center gap-2 pt-2">
