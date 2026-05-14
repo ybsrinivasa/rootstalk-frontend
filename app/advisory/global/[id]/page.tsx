@@ -257,70 +257,95 @@ export default function GlobalPackageDetailPage() {
     Promise.all(pending).then(() => setOptionsByField(prev => ({ ...prev, ...fetched })))
   }, [practiceForm.l2_type, l2Spec])
 
-  // Cascade fetch: when COMMON_NAME's value changes, repopulate
-  // every field whose cascade_from includes "COMMON_NAME".
-  //   MANUFACTURER, BRAND_NAME → CN-only lookup
-  //   FORMULATION (cascade), AI_CONCENTRATION → CN-only span (no TN yet)
-  //   cosh_core:formulation siblings that need a CN → same span
-  // Parent-cleared cleanup happens in setElementValue (not here)
-  // so the effect body never runs setState synchronously.
+  // Cascade plumbing (Batch 24): MANUFACTURER and BRAND_NAME are
+  // independent optional peers under COMMON_NAME, each filtering the
+  // other. F + a.i. populate spanning the CN's trade names when no
+  // BRAND is set, and narrow when BRAND is set. Each list has its
+  // own refresh effect; stale child values get auto-cleared when
+  // they fall out of the new list.
   const commonName = elementValues['COMMON_NAME'] || ''
-  useEffect(() => {
-    if (l2Spec.length === 0) return
-    if (!commonName) return
-
-    const cnQ = `common_name=${encodeURIComponent(commonName)}`
-    const fetched: Record<string, CoshOption[]> = {}
-    const pending: Promise<unknown>[] = []
-    const wireField = (field: L2ElementField, url: string) => {
-      pending.push(api.get<CoshOption[]>(url)
-        .then(r => { fetched[field.name] = r.data })
-        .catch(() => { fetched[field.name] = [] }))
-    }
-    for (const f of l2Spec) {
-      if (f.source === 'cosh_cascade:manufacturers_for_common_name') {
-        wireField(f, `/cosh/options/manufacturers?${cnQ}`)
-      } else if (f.source === 'cosh_cascade:brands_for_common_name_and_manufacturer') {
-        wireField(f, `/cosh/options/trade-names?${cnQ}`)
-      } else if (f.source === 'cosh_cascade:formulation_for_brand') {
-        wireField(f, `/cosh/options/formulations?${cnQ}`)
-      } else if (f.source === 'cosh_cascade:ai_concentration_for_brand') {
-        wireField(f, `/cosh/options/ai-concentrations?${cnQ}`)
-      } else if (f.source === 'cosh_core:formulation' && f.cascade_from.length === 0) {
-        // L2-level formulation field that lives alongside a
-        // COMMON_NAME — span the CN's trade names for V1.
-        wireField(f, `/cosh/options/formulations?${cnQ}`)
-      }
-    }
-    if (pending.length === 0) return
-    Promise.all(pending).then(() => setOptionsByField(prev => ({ ...prev, ...fetched })))
-  }, [commonName, l2Spec])
-
-  // Cascade fetch: when BRAND_NAME's value changes, narrow
-  // FORMULATION + AI_CONCENTRATION to that trade name.
+  const manufacturer = elementValues['MANUFACTURER'] || ''
   const brandName = elementValues['BRAND_NAME'] || ''
+
+  // F + a.i. — fetches with CN and optional TN. Replaces the
+  // separate CN-cascade and TN-narrow effects from Batch 20.
   useEffect(() => {
     if (l2Spec.length === 0) return
     if (!commonName) return
-    if (!brandName) return  // CN-only span is handled by the prior effect.
-
-    const tnQ = `common_name=${encodeURIComponent(commonName)}&trade_name=${encodeURIComponent(brandName)}`
+    const cnEnc = encodeURIComponent(commonName)
+    const tnSuffix = brandName ? `&trade_name=${encodeURIComponent(brandName)}` : ''
+    const url_form = `/cosh/options/formulations?common_name=${cnEnc}${tnSuffix}`
+    const url_ai = `/cosh/options/ai-concentrations?common_name=${cnEnc}${tnSuffix}`
     const fetched: Record<string, CoshOption[]> = {}
     const pending: Promise<unknown>[] = []
     for (const f of l2Spec) {
       if (f.source === 'cosh_cascade:formulation_for_brand') {
-        pending.push(api.get<CoshOption[]>(`/cosh/options/formulations?${tnQ}`)
+        pending.push(api.get<CoshOption[]>(url_form)
           .then(r => { fetched[f.name] = r.data })
           .catch(() => { fetched[f.name] = [] }))
       } else if (f.source === 'cosh_cascade:ai_concentration_for_brand') {
-        pending.push(api.get<CoshOption[]>(`/cosh/options/ai-concentrations?${tnQ}`)
+        pending.push(api.get<CoshOption[]>(url_ai)
+          .then(r => { fetched[f.name] = r.data })
+          .catch(() => { fetched[f.name] = [] }))
+      } else if (f.source === 'cosh_core:formulation' && f.cascade_from.length === 0) {
+        // L2-level formulation field that lives alongside a
+        // COMMON_NAME — span the CN's trade names for V1.
+        pending.push(api.get<CoshOption[]>(url_form)
           .then(r => { fetched[f.name] = r.data })
           .catch(() => { fetched[f.name] = [] }))
       }
     }
     if (pending.length === 0) return
     Promise.all(pending).then(() => setOptionsByField(prev => ({ ...prev, ...fetched })))
-  }, [brandName, commonName, l2Spec])
+  }, [commonName, brandName, l2Spec])
+
+  // MFR list refresh — fetches with CN and optional TN cross-filter.
+  // Clears MFR's current value if it falls out of the new list.
+  useEffect(() => {
+    if (l2Spec.length === 0) return
+    if (!commonName) return
+    const mfrField = l2Spec.find(f => f.source === 'cosh_cascade:manufacturers_for_common_name')
+    if (!mfrField) return
+    const cnEnc = encodeURIComponent(commonName)
+    const tnSuffix = brandName ? `&trade_name=${encodeURIComponent(brandName)}` : ''
+    api.get<CoshOption[]>(`/cosh/options/manufacturers?common_name=${cnEnc}${tnSuffix}`)
+      .then(r => {
+        setOptionsByField(prev => ({ ...prev, [mfrField.name]: r.data }))
+        setElementValues(prev => {
+          const cur = prev[mfrField.name] || ''
+          if (cur && !r.data.some(o => o.cosh_id === cur)) {
+            return { ...prev, [mfrField.name]: '' }
+          }
+          return prev
+        })
+      })
+      .catch(() => { /* leave list as-is */ })
+  }, [commonName, brandName, l2Spec])
+
+  // TN list refresh — fetches with CN and optional MFR cross-filter.
+  // Clears TN (and downstream F + a.i.) if it falls out of the new list.
+  useEffect(() => {
+    if (l2Spec.length === 0) return
+    if (!commonName) return
+    const tnField = l2Spec.find(f => f.source === 'cosh_cascade:brands_for_common_name_and_manufacturer')
+    if (!tnField) return
+    const cnEnc = encodeURIComponent(commonName)
+    const mfrSuffix = manufacturer ? `&manufacturer=${encodeURIComponent(manufacturer)}` : ''
+    api.get<CoshOption[]>(`/cosh/options/trade-names?common_name=${cnEnc}${mfrSuffix}`)
+      .then(r => {
+        setOptionsByField(prev => ({ ...prev, [tnField.name]: r.data }))
+        setElementValues(prev => {
+          const cur = prev[tnField.name] || ''
+          if (cur && !r.data.some(o => o.cosh_id === cur)) {
+            // Stale TN — clear it. The F + a.i. effect will refire
+            // (via brandName dependency) and re-broaden to CN-scope.
+            return { ...prev, [tnField.name]: '' }
+          }
+          return prev
+        })
+      })
+      .catch(() => { /* leave list as-is */ })
+  }, [commonName, manufacturer, l2Spec])
 
   // Change handler that cascades clear-on-parent-change: setting a
   // new COMMON_NAME wipes MANUFACTURER / BRAND_NAME / FORMULATION /
