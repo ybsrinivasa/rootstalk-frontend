@@ -1312,7 +1312,8 @@ export default function GlobalPackageDetailPage() {
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => { setShowAddPractice(null); setPracticeError('') }}
                     className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
-                  <button type="submit" disabled={addingPractice}
+                  <button type="submit"
+                    disabled={addingPractice || !practiceForm.l1_type || !practiceForm.l2_type}
                     className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
                     {addingPractice ? 'Adding…' : 'Add Practice'}
                   </button>
