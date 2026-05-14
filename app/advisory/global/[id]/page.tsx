@@ -47,6 +47,9 @@ interface GlobalVariable {
   id: string
   parameter_id: string
   name: string
+  // Batch 35 (2026-05-14): null = SE-added (editable on any parent),
+  // non-null = Cosh-mirrored (read-only regardless of parent source).
+  cosh_id: string | null
 }
 interface PackageVariableAssignment {
   parameter_id: string
@@ -1307,6 +1310,31 @@ export default function GlobalPackageDetailPage() {
                 <h2 className="font-bold text-slate-900">
                   {editingPractice ? 'Edit Practice' : 'Add Practice'}
                 </h2>
+                {/* Batch 35 — surface the timeline + package context the
+                    SE is authoring against. Annual packages show the
+                    reference type (DAS/DBS) so the SE knows whether
+                    Day numbers are from sowing or before sowing;
+                    Perennial timelines show the calendar window. */}
+                {(() => {
+                  const tl = timelines.find(t => t.id === showAddPractice)
+                  if (!pkg || !tl) return null
+                  const isPerennial = pkg.package_type === 'PERENNIAL'
+                  const pkgLabel = isPerennial ? 'Perennial' : 'Annual'
+                  const refLabel = tl.from_type === 'CALENDAR' ? 'Calendar'
+                    : tl.from_type === 'DAS' ? 'DAS (days after sowing)'
+                      : tl.from_type === 'DBS' ? 'DBS (days before sowing)'
+                        : tl.from_type
+                  const duration = Math.abs(tl.to_value - tl.from_value)
+                  const range = formatTimelineRange(tl)
+                  return (
+                    <p className="text-xs text-slate-500 mt-1">
+                      {pkgLabel} · <span className="font-medium text-slate-700">{tl.name}</span> · {refLabel} · {range}
+                      {tl.from_type !== 'CALENDAR' && (
+                        <> <span className="text-slate-400">({duration} day{duration === 1 ? '' : 's'})</span></>
+                      )}
+                    </p>
+                  )
+                })()}
               </div>
               <form onSubmit={handleAddPractice} className="p-6 space-y-4 overflow-y-auto">
                 <div>
@@ -1796,44 +1824,60 @@ export default function GlobalPackageDetailPage() {
                           {newVarForParamId === param.id ? 'Cancel' : '+ Variable'}
                         </button>
                       </div>
-                      {/* Variable pills (only on CUSTOM — Cosh variables are
-                          read-only; renaming them locally would drift away
-                          from upstream Cosh translations). */}
-                      {isCustom && vars.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 mt-2 ml-1">
-                          {vars.map(v => {
-                            const key = `${param.id}:${v.id}`
-                            const editingThis = editingVarKey === key
-                            return editingThis ? (
-                              <input key={v.id}
-                                value={editingVarName}
-                                onChange={e => setEditingVarName(e.target.value)}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') handleRenameVariable(param.id, v.id, editingVarName)
-                                  if (e.key === 'Escape') setEditingVarKey(null)
-                                }}
-                                onBlur={() => handleRenameVariable(param.id, v.id, editingVarName)}
-                                autoFocus
-                                className="border border-blue-300 rounded-full px-2 py-0.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                            ) : (
-                              <span key={v.id} className="inline-flex items-center gap-1 bg-slate-100 text-slate-600 text-[11px] rounded-full pl-2.5 pr-1 py-0.5">
-                                <button onClick={() => { setEditingVarKey(key); setEditingVarName(v.name) }}
-                                  className="hover:text-blue-600">{v.name}</button>
-                                <button onClick={() => handleDeleteVariable(param.id, v.id, v.name)}
-                                  className="text-slate-400 hover:text-red-500 ml-0.5 leading-none"
-                                  title="Delete variable">
-                                  ×
-                                </button>
-                              </span>
-                            )
-                          })}
-                        </div>
-                      )}
-                      {!isCustom && vars.length > 0 && (
-                        <p className="text-[11px] text-slate-400 mt-1.5 ml-1">
-                          {vars.length} variable{vars.length === 1 ? '' : 's'}: {vars.map(v => v.name).join(', ')}
-                        </p>
-                      )}
+                      {/* Variable rendering — Batch 35 (2026-05-14): the
+                          gate is per-variable (cosh_id), not per-parameter
+                          source. A Cosh-mirrored parent can still hold
+                          SE-added variables which the expert can rename
+                          or delete; Cosh-mirrored variables themselves are
+                          rendered as static chips with no controls. */}
+                      {vars.length > 0 && (() => {
+                        const coshVars = vars.filter(v => v.cosh_id !== null)
+                        const seVars = vars.filter(v => v.cosh_id === null)
+                        return (
+                          <div className="mt-1.5 ml-1 space-y-1">
+                            {coshVars.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 items-center">
+                                {coshVars.map(v => (
+                                  <span key={v.id} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-[11px] rounded-full px-2.5 py-0.5"
+                                    title="From Cosh — read-only">
+                                    {v.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {seVars.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {seVars.map(v => {
+                                  const key = `${param.id}:${v.id}`
+                                  const editingThis = editingVarKey === key
+                                  return editingThis ? (
+                                    <input key={v.id}
+                                      value={editingVarName}
+                                      onChange={e => setEditingVarName(e.target.value)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') handleRenameVariable(param.id, v.id, editingVarName)
+                                        if (e.key === 'Escape') setEditingVarKey(null)
+                                      }}
+                                      onBlur={() => handleRenameVariable(param.id, v.id, editingVarName)}
+                                      autoFocus
+                                      className="border border-blue-300 rounded-full px-2 py-0.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                  ) : (
+                                    <span key={v.id} className="inline-flex items-center gap-1 bg-slate-100 text-slate-600 text-[11px] rounded-full pl-2.5 pr-1 py-0.5">
+                                      <button onClick={() => { setEditingVarKey(key); setEditingVarName(v.name) }}
+                                        className="hover:text-blue-600">{v.name}</button>
+                                      <button onClick={() => handleDeleteVariable(param.id, v.id, v.name)}
+                                        className="text-slate-400 hover:text-red-500 ml-0.5 leading-none"
+                                        title="Delete variable">
+                                        ×
+                                      </button>
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                   )
                 })}
