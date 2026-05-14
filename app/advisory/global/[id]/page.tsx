@@ -12,6 +12,7 @@ interface Package {
 }
 interface Timeline {
   id: string; name: string; from_type: string; from_value: number; to_value: number; display_order: number
+  status?: string  // "ACTIVE" | "INACTIVE" — Batch 28
 }
 interface Practice {
   id: string; l0_type: string; l1_type: string | null; l2_type: string | null
@@ -175,6 +176,18 @@ export default function GlobalPackageDetailPage() {
     // Calendar-only — drive month/day pickers; serialised to
     // from_value/to_value (day-of-year) on submit.
     from_month: '1', from_day: '1', to_month: '12', to_day: '31',
+  })
+
+  // Edit Timeline (Batch 28). `showEditTL` carries the Timeline being
+  // edited, or null. The form mirrors the Add Timeline shape plus a
+  // status toggle; from_type stays read-only (locked at create time).
+  const [showEditTL, setShowEditTL] = useState<Timeline | null>(null)
+  const [editingTL, setEditingTL] = useState(false)
+  const [editTLError, setEditTLError] = useState('')
+  const [editTLForm, setEditTLForm] = useState({
+    name: '', from_value: '1', to_value: '30',
+    from_month: '1', from_day: '1', to_month: '12', to_day: '31',
+    status: 'ACTIVE',
   })
 
   const [showAddPractice, setShowAddPractice] = useState<string | null>(null)
@@ -422,6 +435,7 @@ export default function GlobalPackageDetailPage() {
     name: '', duration_days: '120',
     start_date_label_cosh_id: 'label:sowing_date',
     description: '',
+    status: 'DRAFT',  // Batch 28: ACTIVE / INACTIVE toggle; DRAFT shown read-only.
   })
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState('')
@@ -438,6 +452,16 @@ export default function GlobalPackageDetailPage() {
   const [newVarForParamId, setNewVarForParamId] = useState<string | null>(null)
   const [newVarName, setNewVarName] = useState('')
   const [pvSaveError, setPvSaveError] = useState('')
+
+  // Batch 28: Custom Parameter atomic create + rename + delete.
+  const [creatingParam, setCreatingParam] = useState(false)
+  const [paramDraft, setParamDraft] = useState<{ name: string; variables: string[] }>({
+    name: '', variables: ['', ''],  // ≥ 2 variables required
+  })
+  const [editingParamId, setEditingParamId] = useState<string | null>(null)
+  const [editingParamName, setEditingParamName] = useState('')
+  const [editingVarKey, setEditingVarKey] = useState<string | null>(null)
+  const [editingVarName, setEditingVarName] = useState('')
 
   const loadTimelines = () =>
     api.get<Timeline[]>(`/advisory/global/packages/${id}/timelines`)
@@ -526,6 +550,68 @@ export default function GlobalPackageDetailPage() {
     } finally { setAddingTL(false) }
   }
 
+  function openEditTimeline(tl: Timeline) {
+    const isCalendar = tl.from_type === 'CALENDAR'
+    const fromMD = isCalendar ? doyToMonthDay(tl.from_value) : { month: 1, day: 1 }
+    const toMD = isCalendar ? doyToMonthDay(tl.to_value) : { month: 12, day: 31 }
+    setEditTLForm({
+      name: tl.name,
+      from_value: String(tl.from_value),
+      to_value: String(tl.to_value),
+      from_month: String(fromMD.month), from_day: String(fromMD.day),
+      to_month: String(toMD.month), to_day: String(toMD.day),
+      status: tl.status || 'ACTIVE',
+    })
+    setEditTLError('')
+    setShowEditTL(tl)
+  }
+
+  async function handleEditTimeline(e: FormEvent) {
+    e.preventDefault()
+    if (!showEditTL) return
+    setEditTLError('')
+
+    const isCalendar = showEditTL.from_type === 'CALENDAR'
+    let fromVal: number, toVal: number
+    if (isCalendar) {
+      fromVal = dayOfYear(parseInt(editTLForm.from_month), parseInt(editTLForm.from_day))
+      toVal = dayOfYear(parseInt(editTLForm.to_month), parseInt(editTLForm.to_day))
+      if (fromVal >= toVal) {
+        setEditTLError('FROM date must be earlier than TO date in the calendar year.')
+        return
+      }
+    } else {
+      fromVal = parseInt(editTLForm.from_value)
+      toVal = parseInt(editTLForm.to_value)
+      if (Number.isNaN(fromVal) || Number.isNaN(toVal)) {
+        setEditTLError('FROM and TO must be whole numbers.'); return
+      }
+      if (showEditTL.from_type === 'DAS' && fromVal >= toVal) {
+        setEditTLError('For DAS, FROM (smaller) must be less than TO (larger).'); return
+      }
+      if (showEditTL.from_type === 'DBS' && fromVal <= toVal) {
+        setEditTLError('For DBS, FROM (larger) must be greater than TO (smaller).'); return
+      }
+    }
+
+    setEditingTL(true)
+    try {
+      const { data } = await api.put<Timeline>(
+        `/advisory/global/packages/${id}/timelines/${showEditTL.id}`,
+        {
+          name: editTLForm.name,
+          from_value: fromVal,
+          to_value: toVal,
+          status: editTLForm.status,
+        },
+      )
+      setTimelines(tls => tls.map(t => t.id === data.id ? data : t))
+      setShowEditTL(null)
+    } catch (err: unknown) {
+      setEditTLError(extractErrorMessage(err, 'Failed to update timeline.'))
+    } finally { setEditingTL(false) }
+  }
+
   async function handleDeleteTL(tl: Timeline) {
     if (!confirm(`Delete timeline "${tl.name}"?`)) return
     await api.delete(`/advisory/global/packages/${id}/timelines/${tl.id}`)
@@ -607,6 +693,7 @@ export default function GlobalPackageDetailPage() {
       duration_days: String(pkg.duration_days),
       start_date_label_cosh_id: pkg.start_date_label_cosh_id || 'label:sowing_date',
       description: pkg.description || '',
+      status: pkg.status,
     })
     setEditError('')
     setShowEdit(true)
@@ -617,12 +704,20 @@ export default function GlobalPackageDetailPage() {
     if (!pkg) return
     setSavingEdit(true); setEditError('')
     try {
-      const { data } = await api.put<Package>(`/advisory/global/packages/${id}`, {
+      const body: Record<string, unknown> = {
         name: editForm.name.trim() || undefined,
         duration_days: parseInt(editForm.duration_days),
         start_date_label_cosh_id: editForm.start_date_label_cosh_id,
         description: editForm.description.trim() || null,
-      })
+      }
+      // Status change is only sent when the SE actually toggled it
+      // (and only when the new value is allowed: ACTIVE↔INACTIVE
+      // freely, DRAFT→INACTIVE allowed, DRAFT→ACTIVE blocked
+      // server-side — that path goes through Publish).
+      if (editForm.status !== pkg.status) {
+        body.status = editForm.status
+      }
+      const { data } = await api.put<Package>(`/advisory/global/packages/${id}`, body)
       setPkg(data)
       setShowEdit(false)
     } catch (err: unknown) {
@@ -673,21 +768,92 @@ export default function GlobalPackageDetailPage() {
     loadPackageVariables()
   }, [pkg?.crop_cosh_id])
 
-  async function handleAddParameter() {
-    if (!newParamName.trim() || !pkg) return
+  // Batch 28: atomic Custom Parameter create (name + ≥ 2 variables in
+  // one round-trip). Replaces the old inline name-only create.
+  function openCreateParam() {
+    setParamDraft({ name: '', variables: ['', ''] })
+    setPvSaveError('')
+    setCreatingParam(true)
+  }
+
+  async function handleCreateCustomParam() {
+    if (!pkg) return
+    const name = paramDraft.name.trim()
+    const variables = paramDraft.variables.map(v => v.trim()).filter(Boolean)
+    if (!name) { setPvSaveError('Parameter name is required.'); return }
+    if (variables.length < 2) { setPvSaveError('At least 2 variables are required.'); return }
     setPvSaveError('')
     try {
       await api.post('/advisory/global/parameters', {
         crop_cosh_id: pkg.crop_cosh_id,
-        name: newParamName.trim(),
+        name,
+        variables: variables.map(n => ({ name: n })),
       })
-      setNewParamName('')
+      setCreatingParam(false)
       await loadParameters(pkg.crop_cosh_id)
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-      const msg = typeof detail === 'string' ? detail : (detail as { message?: string })?.message
-      setPvSaveError(msg || 'Failed to add parameter.')
+      setPvSaveError(extractErrorMessage(err, 'Failed to create parameter.'))
     }
+  }
+
+  async function handleRenameParameter(paramId: string, newName: string) {
+    if (!pkg || !newName.trim()) return
+    setPvSaveError('')
+    try {
+      await api.put(`/advisory/global/parameters/${paramId}`, { name: newName.trim() })
+      setEditingParamId(null)
+      await loadParameters(pkg.crop_cosh_id)
+    } catch (err: unknown) {
+      setPvSaveError(extractErrorMessage(err, 'Failed to rename parameter.'))
+    }
+  }
+
+  async function handleDeleteParameter(paramId: string, paramName: string) {
+    if (!pkg) return
+    if (!confirm(`Delete parameter "${paramName}" and all its variables?`)) return
+    setPvSaveError('')
+    try {
+      await api.delete(`/advisory/global/parameters/${paramId}`)
+      await loadParameters(pkg.crop_cosh_id)
+    } catch (err: unknown) {
+      setPvSaveError(extractErrorMessage(err, 'Failed to delete parameter.'))
+    }
+  }
+
+  async function handleRenameVariable(paramId: string, varId: string, newName: string) {
+    if (!pkg || !newName.trim()) return
+    setPvSaveError('')
+    try {
+      await api.put(
+        `/advisory/global/parameters/${paramId}/variables/${varId}`,
+        { name: newName.trim() },
+      )
+      setEditingVarKey(null)
+      await loadParameters(pkg.crop_cosh_id)
+    } catch (err: unknown) {
+      setPvSaveError(extractErrorMessage(err, 'Failed to rename variable.'))
+    }
+  }
+
+  async function handleDeleteVariable(paramId: string, varId: string, varName: string) {
+    if (!pkg) return
+    if (!confirm(`Delete variable "${varName}"?`)) return
+    setPvSaveError('')
+    try {
+      await api.delete(`/advisory/global/parameters/${paramId}/variables/${varId}`)
+      await loadParameters(pkg.crop_cosh_id)
+    } catch (err: unknown) {
+      setPvSaveError(extractErrorMessage(err, 'Failed to delete variable.'))
+    }
+  }
+
+  // Legacy inline-add: still used to add a 3rd, 4th variable to an
+  // existing parameter. Kept as-is to minimise UI churn.
+  async function handleAddParameter() {
+    /* Replaced by handleCreateCustomParam (Batch 28). Kept as a stub
+       to avoid breaking any stale references; the UI no longer calls
+       this. */
+    void newParamName
   }
 
   async function handleAddVariable(parameterId: string) {
@@ -826,13 +992,26 @@ export default function GlobalPackageDetailPage() {
           ) : (
             <div className="space-y-3">
               {timelines.map(tl => (
-                <div key={tl.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                <div key={tl.id} className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${tl.status === 'INACTIVE' ? 'border-slate-200 opacity-70' : 'border-slate-100'}`}>
                   <div className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-slate-50" onClick={() => toggle(tl.id)}>
                     <div className="flex-1">
-                      <p className="font-medium text-slate-800 text-sm">{tl.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-slate-800 text-sm">{tl.name}</p>
+                        {tl.status === 'INACTIVE' && (
+                          <span className="text-[10px] uppercase tracking-wide bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">
+                            Inactive
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-slate-400 mt-0.5">{tl.from_type} · {formatTimelineRange(tl)}</p>
                     </div>
-                    <button onClick={e => { e.stopPropagation(); handleDeleteTL(tl) }} className="text-slate-300 hover:text-red-400 p-1">
+                    <button onClick={e => { e.stopPropagation(); openEditTimeline(tl) }}
+                      className="text-slate-300 hover:text-blue-500 p-1" title="Edit timeline">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                    <button onClick={e => { e.stopPropagation(); handleDeleteTL(tl) }} className="text-slate-300 hover:text-red-400 p-1" title="Delete timeline">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                       </svg>
@@ -1142,6 +1321,114 @@ export default function GlobalPackageDetailPage() {
             </div>
           </div>
         )}
+        {/* Edit Timeline Modal — Batch 28 */}
+        {showEditTL && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+              <div className="p-6 border-b border-slate-100">
+                <h2 className="font-bold text-slate-900">Edit Timeline</h2>
+                <p className="text-slate-500 text-sm mt-0.5">
+                  Reference Type is locked: <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">{showEditTL.from_type}</span>
+                </p>
+              </div>
+              <form onSubmit={handleEditTimeline} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Name</label>
+                  <input value={editTLForm.name}
+                    onChange={e => setEditTLForm(f => ({ ...f, name: e.target.value }))}
+                    required
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+
+                {showEditTL.from_type === 'CALENDAR' ? (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-slate-700">Window (calendar date)</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">From</label>
+                        <div className="flex gap-1.5">
+                          <select value={editTLForm.from_month}
+                            onChange={e => setEditTLForm(f => ({ ...f, from_month: e.target.value }))}
+                            className="flex-1 border border-slate-200 rounded-xl px-2 py-2 text-sm bg-white">
+                            {MONTH_NAMES.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}
+                          </select>
+                          <input type="number" min="1" max={MONTH_DAYS[parseInt(editTLForm.from_month) - 1]}
+                            value={editTLForm.from_day}
+                            onChange={e => setEditTLForm(f => ({ ...f, from_day: e.target.value }))}
+                            className="w-16 border border-slate-200 rounded-xl px-2 py-2 text-sm text-center" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">To</label>
+                        <div className="flex gap-1.5">
+                          <select value={editTLForm.to_month}
+                            onChange={e => setEditTLForm(f => ({ ...f, to_month: e.target.value }))}
+                            className="flex-1 border border-slate-200 rounded-xl px-2 py-2 text-sm bg-white">
+                            {MONTH_NAMES.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}
+                          </select>
+                          <input type="number" min="1" max={MONTH_DAYS[parseInt(editTLForm.to_month) - 1]}
+                            value={editTLForm.to_day}
+                            onChange={e => setEditTLForm(f => ({ ...f, to_day: e.target.value }))}
+                            className="w-16 border border-slate-200 rounded-xl px-2 py-2 text-sm text-center" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">From (Day)</label>
+                      <input type="number" value={editTLForm.from_value}
+                        onChange={e => setEditTLForm(f => ({ ...f, from_value: e.target.value }))}
+                        required
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">To (Day)</label>
+                      <input type="number" value={editTLForm.to_value}
+                        onChange={e => setEditTLForm(f => ({ ...f, to_value: e.target.value }))}
+                        required
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Status</label>
+                  <div className="flex gap-2">
+                    {(['ACTIVE', 'INACTIVE'] as const).map(s => (
+                      <button key={s} type="button"
+                        onClick={() => setEditTLForm(f => ({ ...f, status: s }))}
+                        className={`flex-1 py-2 rounded-xl text-sm font-medium border ${
+                          editTLForm.status === s
+                            ? (s === 'ACTIVE'
+                                ? 'bg-green-50 border-green-300 text-green-700'
+                                : 'bg-slate-100 border-slate-300 text-slate-700')
+                            : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                        }`}>
+                        {s.charAt(0) + s.slice(1).toLowerCase()}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Inactive timelines stay visible on this page with a badge but are excluded from the farmer&apos;s daily advisory.
+                  </p>
+                </div>
+
+                {editTLError && <p className="text-sm text-red-600">{editTLError}</p>}
+                <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={() => { setShowEditTL(null); setEditTLError('') }}
+                    className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
+                  <button type="submit" disabled={editingTL}
+                    className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
+                    {editingTL ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* Edit Package Details Modal */}
         {showEdit && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
@@ -1190,6 +1477,46 @@ export default function GlobalPackageDetailPage() {
                     rows={3}
                     className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                 </div>
+
+                {/* Status toggle (Batch 28). DRAFT can move to INACTIVE
+                    (discarding); promotion to ACTIVE goes through the
+                    Publish button, not this toggle. */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Status</label>
+                  <div className="flex gap-2">
+                    {(['DRAFT', 'ACTIVE', 'INACTIVE'] as const).map(s => {
+                      const isCurrent = editForm.status === s
+                      // DRAFT button is read-only — SE can't manually set DRAFT;
+                      // it's only set by the system on create / clone.
+                      // ACTIVE button is disabled when current is DRAFT
+                      // (must go through Publish).
+                      const disabled = s === 'DRAFT'
+                        || (s === 'ACTIVE' && pkg.status === 'DRAFT')
+                      return (
+                        <button key={s} type="button"
+                          onClick={() => !disabled && setEditForm(f => ({ ...f, status: s }))}
+                          disabled={disabled}
+                          className={`flex-1 py-2 rounded-xl text-sm font-medium border ${
+                            isCurrent
+                              ? (s === 'ACTIVE'
+                                  ? 'bg-green-50 border-green-300 text-green-700'
+                                  : s === 'DRAFT'
+                                    ? 'bg-amber-50 border-amber-300 text-amber-700'
+                                    : 'bg-slate-100 border-slate-300 text-slate-700')
+                              : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white'
+                          }`}>
+                          {s.charAt(0) + s.slice(1).toLowerCase()}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {pkg.status === 'DRAFT'
+                      ? 'Use Publish to promote DRAFT → ACTIVE. You can also discard a draft by switching it to Inactive.'
+                      : 'Toggle between Active and Inactive. Inactive packages are hidden from CA-portal pull and farmer advisory.'}
+                  </p>
+                </div>
+
                 {editError && <p className="text-sm text-red-600">{editError}</p>}
                 <div className="flex gap-3 pt-2">
                   <button type="button"
@@ -1229,37 +1556,111 @@ export default function GlobalPackageDetailPage() {
                 ) : parameters.map(param => {
                   const vars = variablesByParam[param.id] || []
                   const assignedId = getAssignedVariableId(param.id)
+                  const isCustom = param.source === 'CUSTOM'
+                  const isEditingThisParam = editingParamId === param.id
                   return (
-                    <div key={param.id} className="flex items-center gap-3 py-2 border-b border-slate-50 last:border-0">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-700 truncate">{param.name}</p>
-                        {vars.length === 0 ? (
-                          <p className="text-[11px] text-slate-400 italic mt-0.5">
-                            no variables — add at least two to be assignable
-                          </p>
-                        ) : (
-                          <p className="text-[11px] text-slate-400 mt-0.5">
-                            {vars.length} variable{vars.length === 1 ? '' : 's'}: {vars.map(v => v.name).join(', ')}
-                          </p>
+                    <div key={param.id} className="py-3 border-b border-slate-50 last:border-0">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          {isEditingThisParam ? (
+                            <input
+                              value={editingParamName}
+                              onChange={e => setEditingParamName(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleRenameParameter(param.id, editingParamName)
+                                if (e.key === 'Escape') setEditingParamId(null)
+                              }}
+                              onBlur={() => handleRenameParameter(param.id, editingParamName)}
+                              autoFocus
+                              className="w-full border border-blue-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium text-slate-700 truncate">{param.name}</p>
+                              {!isCustom && (
+                                <span className="text-[10px] uppercase tracking-wide bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                                  Cosh
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <select
+                          value={assignedId}
+                          onChange={e => handleAssignVariable(param.id, e.target.value)}
+                          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+                          <option value="">— not set —</option>
+                          {vars.map(v => (
+                            <option key={v.id} value={v.id}>{v.name}</option>
+                          ))}
+                        </select>
+                        {isCustom && !isEditingThisParam && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setEditingParamId(param.id)
+                                setEditingParamName(param.name)
+                              }}
+                              className="text-slate-400 hover:text-blue-500 p-1" title="Rename parameter">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteParameter(param.id, param.name)}
+                              className="text-slate-400 hover:text-red-500 p-1" title="Delete parameter">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22" />
+                              </svg>
+                            </button>
+                          </>
                         )}
+                        <button
+                          onClick={() => {
+                            setNewVarForParamId(newVarForParamId === param.id ? null : param.id)
+                            setNewVarName('')
+                          }}
+                          className="text-xs text-blue-600 hover:underline">
+                          {newVarForParamId === param.id ? 'Cancel' : '+ Variable'}
+                        </button>
                       </div>
-                      <select
-                        value={assignedId}
-                        onChange={e => handleAssignVariable(param.id, e.target.value)}
-                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
-                        <option value="">— not set —</option>
-                        {vars.map(v => (
-                          <option key={v.id} value={v.id}>{v.name}</option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={() => {
-                          setNewVarForParamId(newVarForParamId === param.id ? null : param.id)
-                          setNewVarName('')
-                        }}
-                        className="text-xs text-blue-600 hover:underline">
-                        {newVarForParamId === param.id ? 'Cancel' : '+ Variable'}
-                      </button>
+                      {/* Variable pills (only on CUSTOM — Cosh variables are
+                          read-only; renaming them locally would drift away
+                          from upstream Cosh translations). */}
+                      {isCustom && vars.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-2 ml-1">
+                          {vars.map(v => {
+                            const key = `${param.id}:${v.id}`
+                            const editingThis = editingVarKey === key
+                            return editingThis ? (
+                              <input key={v.id}
+                                value={editingVarName}
+                                onChange={e => setEditingVarName(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') handleRenameVariable(param.id, v.id, editingVarName)
+                                  if (e.key === 'Escape') setEditingVarKey(null)
+                                }}
+                                onBlur={() => handleRenameVariable(param.id, v.id, editingVarName)}
+                                autoFocus
+                                className="border border-blue-300 rounded-full px-2 py-0.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                            ) : (
+                              <span key={v.id} className="inline-flex items-center gap-1 bg-slate-100 text-slate-600 text-[11px] rounded-full pl-2.5 pr-1 py-0.5">
+                                <button onClick={() => { setEditingVarKey(key); setEditingVarName(v.name) }}
+                                  className="hover:text-blue-600">{v.name}</button>
+                                <button onClick={() => handleDeleteVariable(param.id, v.id, v.name)}
+                                  className="text-slate-400 hover:text-red-500 ml-0.5 leading-none"
+                                  title="Delete variable">
+                                  ×
+                                </button>
+                              </span>
+                            )
+                          })}
+                        </div>
+                      )}
+                      {!isCustom && vars.length > 0 && (
+                        <p className="text-[11px] text-slate-400 mt-1.5 ml-1">
+                          {vars.length} variable{vars.length === 1 ? '' : 's'}: {vars.map(v => v.name).join(', ')}
+                        </p>
+                      )}
                     </div>
                   )
                 })}
@@ -1281,18 +1682,79 @@ export default function GlobalPackageDetailPage() {
                   </div>
                 )}
 
-                <div className="flex items-center gap-2 pt-3 border-t border-slate-50">
-                  <input
-                    value={newParamName}
-                    onChange={e => setNewParamName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') handleAddParameter() }}
-                    placeholder="New parameter name (e.g. Irrigation)"
-                    className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  <button onClick={handleAddParameter}
-                    disabled={!newParamName.trim()}
-                    className="text-sm font-medium px-3 py-1.5 rounded-lg border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-50">
-                    + Parameter
-                  </button>
+                {/* New Parameter — opens an atomic sub-dialog. Per Batch 28
+                    the API requires name + ≥ 2 variables in one round-trip,
+                    so the inline single-field form is replaced by a proper
+                    sub-form. */}
+                <div className="pt-3 border-t border-slate-50">
+                  {!creatingParam ? (
+                    <button onClick={openCreateParam}
+                      className="w-full text-sm font-medium px-3 py-2 rounded-lg border border-dashed border-blue-300 text-blue-600 hover:bg-blue-50">
+                      + New Custom Parameter
+                    </button>
+                  ) : (
+                    <div className="border border-blue-200 rounded-xl p-4 space-y-3 bg-blue-50/30">
+                      <h4 className="text-sm font-semibold text-slate-800">New Custom Parameter</h4>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Name</label>
+                        <input
+                          value={paramDraft.name}
+                          onChange={e => setParamDraft(d => ({ ...d, name: e.target.value }))}
+                          autoFocus
+                          placeholder="e.g. Irrigation"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          Variables <span className="text-slate-400 font-normal">(at least 2 required)</span>
+                        </label>
+                        <div className="space-y-1.5">
+                          {paramDraft.variables.map((v, i) => (
+                            <div key={i} className="flex gap-1.5">
+                              <input
+                                value={v}
+                                onChange={e => setParamDraft(d => ({
+                                  ...d, variables: d.variables.map((vv, ii) => ii === i ? e.target.value : vv),
+                                }))}
+                                placeholder={`Variable ${i + 1} (e.g. ${i === 0 ? 'Drip' : 'Flood'})`}
+                                className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                              {paramDraft.variables.length > 2 && (
+                                <button type="button"
+                                  onClick={() => setParamDraft(d => ({
+                                    ...d, variables: d.variables.filter((_, ii) => ii !== i),
+                                  }))}
+                                  className="text-slate-400 hover:text-red-500 px-2"
+                                  title="Remove this variable slot">
+                                  ×
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <button type="button"
+                          onClick={() => setParamDraft(d => ({ ...d, variables: [...d.variables, ''] }))}
+                          className="text-xs text-blue-600 hover:underline mt-1.5">
+                          + Add another variable
+                        </button>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button type="button"
+                          onClick={() => { setCreatingParam(false); setPvSaveError('') }}
+                          className="flex-1 text-sm border border-slate-200 text-slate-700 font-medium py-1.5 rounded-lg hover:bg-white">
+                          Cancel
+                        </button>
+                        <button type="button"
+                          onClick={handleCreateCustomParam}
+                          disabled={
+                            !paramDraft.name.trim()
+                            || paramDraft.variables.filter(v => v.trim()).length < 2
+                          }
+                          className="flex-1 text-sm bg-blue-600 text-white font-semibold py-1.5 rounded-lg disabled:opacity-50">
+                          Create
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {pvSaveError && <p className="text-xs text-red-600">{pvSaveError}</p>}
