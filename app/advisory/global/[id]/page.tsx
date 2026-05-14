@@ -125,6 +125,38 @@ function formatTimelineRange(tl: { from_type: string; from_value: number; to_val
   return `Day ${tl.from_value} → ${tl.to_value}`
 }
 
+// ── Cosh-options cascade (Batch 20, 2026-05-14) ────────────────────────────
+// The rule book's source strings (`cosh_core:<slug>` and
+// `cosh_cascade:<lookup>`) map to backend `/cosh/options/*` endpoints
+// shipped 2026-05-14. We translate source string → fetch call here.
+
+interface CoshOption { cosh_id: string; name: string }
+
+// `cosh_core:<slug>` slugs that point at a Cosh unit_types pool.
+// Matches UNIT_TYPE_SLUG_TO_COSH_UUIDS on the backend.
+const UNIT_TYPE_SLUGS = new Set([
+  'dosage_unit', 'volume_unit', 'temperature_unit', 'distance_unit',
+  'time_unit', 'number_unit', 'irrigation_unit', 'size_unit', 'depth_unit',
+])
+
+// `cosh_core:<slug>` and `cosh_cascade:<lookup>` strings the modal
+// can render as dropdowns. Everything else (planting_material,
+// itk_name, maturity_index, …) falls back to free text until Cosh
+// ships those Connects.
+function isCoshDropdownSource(source: string): boolean {
+  if (source === 'cosh_core:common_name') return true
+  if (source === 'cosh_core:application_method') return true
+  if (source === 'cosh_core:formulation') return true
+  if (source.startsWith('cosh_core:')) {
+    return UNIT_TYPE_SLUGS.has(source.slice(10))
+  }
+  if (source === 'cosh_cascade:manufacturers_for_common_name') return true
+  if (source === 'cosh_cascade:brands_for_common_name_and_manufacturer') return true
+  if (source === 'cosh_cascade:formulation_for_brand') return true
+  if (source === 'cosh_cascade:ai_concentration_for_brand') return true
+  return false
+}
+
 export default function GlobalPackageDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
@@ -168,9 +200,15 @@ export default function GlobalPackageDetailPage() {
   // the elements[] payload (see handleAddPractice).
   const [l2Spec, setL2Spec] = useState<L2ElementField[]>([])
   const [elementValues, setElementValues] = useState<Record<string, string>>({})
+
+  // Cosh option lists for the cascading dropdowns. Keyed by
+  // field.name (e.g. COMMON_NAME, BRAND_NAME, MANUFACTURER,
+  // FORMULATION, AI_CONCENTRATION, DOSAGE_UNIT, …).
+  const [optionsByField, setOptionsByField] = useState<Record<string, CoshOption[]>>({})
+
   useEffect(() => {
     if (!practiceForm.l2_type || !pkg) {
-      setL2Spec([]); setElementValues({}); return
+      setL2Spec([]); setElementValues({}); setOptionsByField({}); return
     }
     // Pass the package's crop_cosh_id so the backend can scope
     // plant-wise dosage extras to PLANT_WISE crops only. AREA_WISE
@@ -184,20 +222,138 @@ export default function GlobalPackageDetailPage() {
         const fresh: Record<string, string> = {}
         for (const f of r.data.elements) fresh[f.name] = ''
         setElementValues(fresh)
+        setOptionsByField({})
       })
-      .catch(() => { setL2Spec([]); setElementValues({}) })
+      .catch(() => { setL2Spec([]); setElementValues({}); setOptionsByField({}) })
   }, [practiceForm.l2_type, pkg?.crop_cosh_id, pkg])
 
-  // Helper: source-string → input variant. cosh_core / cosh_cascade
-  // fall back to free text until Cosh ships the dropdown data
-  // (the validator currently treats `cosh_ref` and `value` as
-  // equivalent for "provided", so free text is acceptable input
-  // for V1 demo authoring).
-  function elementInputVariant(source: string): 'text' | 'textarea' | 'number' | 'media' | 'auto' {
+  // Fetch L2-level dropdowns (no cascade parent) when l2Spec lands.
+  // Common Names, Application Methods, and unit dropdowns are all
+  // scoped by L2; they don't depend on other field values, so they
+  // can populate immediately.
+  useEffect(() => {
+    if (!practiceForm.l2_type || l2Spec.length === 0) return
+    const l2 = practiceForm.l2_type
+    const fetched: Record<string, CoshOption[]> = {}
+    const pending: Promise<unknown>[] = []
+    for (const f of l2Spec) {
+      if (f.cascade_from.length > 0) continue
+      if (f.source === 'cosh_core:common_name') {
+        pending.push(api.get<CoshOption[]>(
+          `/cosh/options/common-names?l2=${encodeURIComponent(l2)}`,
+        ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
+      } else if (f.source === 'cosh_core:application_method') {
+        pending.push(api.get<CoshOption[]>(
+          `/cosh/options/application-methods?l2=${encodeURIComponent(l2)}`,
+        ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
+      } else if (f.source.startsWith('cosh_core:') && UNIT_TYPE_SLUGS.has(f.source.slice(10))) {
+        const slug = f.source.slice(10)
+        pending.push(api.get<CoshOption[]>(
+          `/cosh/options/units?l2=${encodeURIComponent(l2)}&unit_type=${encodeURIComponent(slug)}`,
+        ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
+      }
+    }
+    if (pending.length === 0) return
+    Promise.all(pending).then(() => setOptionsByField(prev => ({ ...prev, ...fetched })))
+  }, [practiceForm.l2_type, l2Spec])
+
+  // Cascade fetch: when COMMON_NAME's value changes, repopulate
+  // every field whose cascade_from includes "COMMON_NAME".
+  //   MANUFACTURER, BRAND_NAME → CN-only lookup
+  //   FORMULATION (cascade), AI_CONCENTRATION → CN-only span (no TN yet)
+  //   cosh_core:formulation siblings that need a CN → same span
+  // Parent-cleared cleanup happens in setElementValue (not here)
+  // so the effect body never runs setState synchronously.
+  const commonName = elementValues['COMMON_NAME'] || ''
+  useEffect(() => {
+    if (l2Spec.length === 0) return
+    if (!commonName) return
+
+    const cnQ = `common_name=${encodeURIComponent(commonName)}`
+    const fetched: Record<string, CoshOption[]> = {}
+    const pending: Promise<unknown>[] = []
+    const wireField = (field: L2ElementField, url: string) => {
+      pending.push(api.get<CoshOption[]>(url)
+        .then(r => { fetched[field.name] = r.data })
+        .catch(() => { fetched[field.name] = [] }))
+    }
+    for (const f of l2Spec) {
+      if (f.source === 'cosh_cascade:manufacturers_for_common_name') {
+        wireField(f, `/cosh/options/manufacturers?${cnQ}`)
+      } else if (f.source === 'cosh_cascade:brands_for_common_name_and_manufacturer') {
+        wireField(f, `/cosh/options/trade-names?${cnQ}`)
+      } else if (f.source === 'cosh_cascade:formulation_for_brand') {
+        wireField(f, `/cosh/options/formulations?${cnQ}`)
+      } else if (f.source === 'cosh_cascade:ai_concentration_for_brand') {
+        wireField(f, `/cosh/options/ai-concentrations?${cnQ}`)
+      } else if (f.source === 'cosh_core:formulation' && f.cascade_from.length === 0) {
+        // L2-level formulation field that lives alongside a
+        // COMMON_NAME — span the CN's trade names for V1.
+        wireField(f, `/cosh/options/formulations?${cnQ}`)
+      }
+    }
+    if (pending.length === 0) return
+    Promise.all(pending).then(() => setOptionsByField(prev => ({ ...prev, ...fetched })))
+  }, [commonName, l2Spec])
+
+  // Cascade fetch: when BRAND_NAME's value changes, narrow
+  // FORMULATION + AI_CONCENTRATION to that trade name.
+  const brandName = elementValues['BRAND_NAME'] || ''
+  useEffect(() => {
+    if (l2Spec.length === 0) return
+    if (!commonName) return
+    if (!brandName) return  // CN-only span is handled by the prior effect.
+
+    const tnQ = `common_name=${encodeURIComponent(commonName)}&trade_name=${encodeURIComponent(brandName)}`
+    const fetched: Record<string, CoshOption[]> = {}
+    const pending: Promise<unknown>[] = []
+    for (const f of l2Spec) {
+      if (f.source === 'cosh_cascade:formulation_for_brand') {
+        pending.push(api.get<CoshOption[]>(`/cosh/options/formulations?${tnQ}`)
+          .then(r => { fetched[f.name] = r.data })
+          .catch(() => { fetched[f.name] = [] }))
+      } else if (f.source === 'cosh_cascade:ai_concentration_for_brand') {
+        pending.push(api.get<CoshOption[]>(`/cosh/options/ai-concentrations?${tnQ}`)
+          .then(r => { fetched[f.name] = r.data })
+          .catch(() => { fetched[f.name] = [] }))
+      }
+    }
+    if (pending.length === 0) return
+    Promise.all(pending).then(() => setOptionsByField(prev => ({ ...prev, ...fetched })))
+  }, [brandName, commonName, l2Spec])
+
+  // Change handler that cascades clear-on-parent-change: setting a
+  // new COMMON_NAME wipes MANUFACTURER / BRAND_NAME / FORMULATION /
+  // AI_CONCENTRATION values + their option lists. Setting a new
+  // BRAND_NAME wipes FORMULATION / AI_CONCENTRATION (their previous
+  // narrowed value is now stale).
+  function setElementValue(fieldName: string, value: string) {
+    const cnChildren = ['MANUFACTURER', 'BRAND_NAME', 'FORMULATION', 'AI_CONCENTRATION']
+    const tnChildren = ['FORMULATION', 'AI_CONCENTRATION']
+    const childrenToClear = fieldName === 'COMMON_NAME' ? cnChildren
+      : fieldName === 'BRAND_NAME' ? tnChildren
+        : []
+    setElementValues(prev => {
+      const next = { ...prev, [fieldName]: value }
+      for (const c of childrenToClear) if (c in next) next[c] = ''
+      return next
+    })
+    if (childrenToClear.length > 0 && !value) {
+      setOptionsByField(prev => {
+        const next = { ...prev }
+        for (const c of childrenToClear) delete next[c]
+        return next
+      })
+    }
+  }
+
+  // Helper: source-string → input variant.
+  function elementInputVariant(source: string): 'text' | 'textarea' | 'number' | 'media' | 'auto' | 'select' {
     if (source === 'auto_calculated') return 'auto'
     if (source.startsWith('media_')) return 'media'
     if (source.startsWith('number_')) return 'number'
     if (source === 'text_area') return 'textarea'
+    if (isCoshDropdownSource(source)) return 'select'
     return 'text'
   }
 
@@ -338,14 +494,20 @@ export default function GlobalPackageDetailPage() {
     // validator treats absent fields as unprovided, so we don't
     // send empty rows (would surface as UNKNOWN_FIELD otherwise).
     // auto_calculated + media_* fields are skipped on the form
-    // already; nothing to send for them here.
+    // already; nothing to send for them here. Dropdown-sourced
+    // (cosh_core/cosh_cascade) fields send `cosh_ref`; free-text
+    // fields send `value`.
     const elements: { element_type: string; value?: string; cosh_ref?: string; unit_cosh_id?: string }[] = []
     for (const field of l2Spec) {
-      if (elementInputVariant(field.source) === 'auto') continue
-      if (elementInputVariant(field.source) === 'media') continue
+      const variant = elementInputVariant(field.source)
+      if (variant === 'auto' || variant === 'media') continue
       const raw = elementValues[field.name]
       if (raw === undefined || raw.trim() === '') continue
-      elements.push({ element_type: field.name, value: raw.trim() })
+      if (variant === 'select') {
+        elements.push({ element_type: field.name, cosh_ref: raw.trim() })
+      } else {
+        elements.push({ element_type: field.name, value: raw.trim() })
+      }
     }
 
     try {
@@ -825,18 +987,13 @@ export default function GlobalPackageDetailPage() {
                   </div>
                 </div>
                 {/* Element form — driven by /practice-taxonomy/elements/{l2}.
-                    Renders only when an L2 is selected. cosh_core / cosh_cascade
-                    fields fall back to free text until Cosh ships the dropdown
-                    data — the validator currently accepts either cosh_ref or a
-                    typed value as "provided", so this works for V1 authoring. */}
+                    Renders only when an L2 is selected. Cosh-backed dropdowns
+                    fire against /cosh/options/*; parents drive children via
+                    cascade_from. Slugs Cosh hasn't shipped yet (planting_material,
+                    itk_name, maturity_index, …) fall back to free text. */}
                 {practiceForm.l2_type && l2Spec.length > 0 && (
                   <div className="border-t border-slate-100 pt-4 space-y-3">
-                    <div className="flex items-baseline justify-between">
-                      <h3 className="text-sm font-semibold text-slate-800">Elements</h3>
-                      <p className="text-[11px] text-slate-400">
-                        Cosh-sourced fields are free text for now (Cosh data still pending).
-                      </p>
-                    </div>
+                    <h3 className="text-sm font-semibold text-slate-800">Elements</h3>
                     {l2Spec.map(field => {
                       const variant = elementInputVariant(field.source)
                       if (variant === 'auto') {
@@ -860,8 +1017,31 @@ export default function GlobalPackageDetailPage() {
                           <span className="text-[11px] text-slate-400 font-normal">{coshHint(field.source)}</span>
                         </>
                       )
-                      const onChange = (v: string) =>
-                        setElementValues(prev => ({ ...prev, [field.name]: v }))
+                      const onChange = (v: string) => setElementValue(field.name, v)
+                      if (variant === 'select') {
+                        const opts = optionsByField[field.name]
+                        const parentBlocker = field.cascade_from.find(p => !(elementValues[p] || '').trim())
+                        const disabled = !!parentBlocker
+                        const placeholder = parentBlocker
+                          ? `— select ${parentBlocker.toLowerCase().replace(/_/g, ' ')} first —`
+                          : opts === undefined ? '— loading… —'
+                            : opts.length === 0 ? '— no options for this L2 —'
+                              : '— select —'
+                        return (
+                          <div key={field.name}>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">{labelText}</label>
+                            <select value={elementValues[field.name] || ''}
+                              disabled={disabled}
+                              onChange={e => onChange(e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400">
+                              <option value="">{placeholder}</option>
+                              {(opts || []).map(o => (
+                                <option key={o.cosh_id} value={o.cosh_id}>{o.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )
+                      }
                       if (variant === 'textarea') {
                         return (
                           <div key={field.name}>
