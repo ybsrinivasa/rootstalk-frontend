@@ -196,11 +196,20 @@ export default function GlobalPackageDetailPage() {
   // shapes only in this sub-batch; mixed AND-OR + IF land in 39C/39D.
   const [relationsByTimeline, setRelationsByTimeline] = useState<Record<string, RelationOut[]>>({})
   const [showAddRelation, setShowAddRelation] = useState<string | null>(null)
+  // Batch 39C upgrade — the form carries the full 3-D parts shape so
+  // mixed AND-OR is authorable directly. AND is multi-Part (Parts AND'd
+  // at the top), OR collapses to a single Part. Both allow multi-Option
+  // within a Part (alternatives OR'd) and multi-Position within an
+  // Option (compound AND-group, capped at one compound per Part by the
+  // backend validator).
   const [relationForm, setRelationForm] = useState<{
     relation_type: 'AND' | 'OR'
-    picked: string[]  // practice_ids, ordered as the SE picked them
+    parts: string[][][]  // parts[part][option][position] = practice_id
     expression: string
-  }>({ relation_type: 'AND', picked: [], expression: '' })
+  }>({ relation_type: 'AND', parts: [[[]]], expression: '' })
+  // Which Option's inline "+ Practice" dropdown is currently open. Only
+  // one picker can be open at a time. `null` = nothing open.
+  const [activePicker, setActivePicker] = useState<{ part: number; option: number } | null>(null)
   const [savingRelation, setSavingRelation] = useState(false)
   const [relationError, setRelationError] = useState('')
 
@@ -674,58 +683,170 @@ export default function GlobalPackageDetailPage() {
 
   function openAddRelation(tlId: string) {
     setShowAddRelation(tlId)
-    setRelationForm({ relation_type: 'AND', picked: [], expression: '' })
+    setRelationForm({ relation_type: 'AND', parts: [[[]]], expression: '' })
+    setActivePicker({ part: 0, option: 0 })
     setRelationError('')
   }
 
-  function toggleRelationPick(practiceId: string) {
+  // ── Batch 39C structure-builder helpers ────────────────────────────────────
+  // The 3-D shape is parts[part][option][position]; mutations are
+  // immutable copies so React picks up state changes cleanly.
+
+  function addPart() {
     setRelationForm(f => {
-      const i = f.picked.indexOf(practiceId)
-      const next = i >= 0
-        ? [...f.picked.slice(0, i), ...f.picked.slice(i + 1)]
-        : [...f.picked, practiceId]
-      return { ...f, picked: next }
+      const next = [...f.parts, [[]]]
+      return { ...f, parts: next }
+    })
+    // Move the picker to the freshly added Part so the SE picks into it
+    // by default.
+    setRelationForm(f => {
+      setActivePicker({ part: f.parts.length - 1, option: 0 })
+      return f
     })
   }
 
-  // For an AND relation, pack all picked practices into one Option of N
-  // positions: parts = [[[p1, p2, ..., pN]]]. For pure OR, each pick
-  // becomes its own Option of 1 position: parts = [[[p1], [p2], ...]].
-  // Mixed AND-OR and IF land in 39C / 39D — the Type radio in 39B is
-  // narrowed to AND / OR.
-  function packRelationParts(type: 'AND' | 'OR', picked: string[]): string[][][] {
-    if (type === 'AND') return [[picked]]
-    return [picked.map(p => [p])]
+  function removePart(partIdx: number) {
+    setRelationForm(f => {
+      if (f.parts.length <= 1) return f  // never below 1 Part
+      const next = f.parts.filter((_, i) => i !== partIdx)
+      return { ...f, parts: next }
+    })
+    setActivePicker(null)
   }
 
-  function buildRelationExpressionText(
-    type: 'AND' | 'OR', picked: string[], tlId: string,
-  ): string {
+  function addOption(partIdx: number) {
+    setRelationForm(f => {
+      const next = f.parts.map((p, i) => i === partIdx ? [...p, []] : p)
+      return { ...f, parts: next }
+    })
+    setRelationForm(f => {
+      const newOptionIdx = (f.parts[partIdx]?.length || 1) - 1
+      setActivePicker({ part: partIdx, option: newOptionIdx })
+      return f
+    })
+  }
+
+  function removeOption(partIdx: number, optionIdx: number) {
+    setRelationForm(f => {
+      const part = f.parts[partIdx]
+      if (!part || part.length <= 1) return f  // never below 1 Option
+      const newPart = part.filter((_, i) => i !== optionIdx)
+      const next = f.parts.map((p, i) => i === partIdx ? newPart : p)
+      return { ...f, parts: next }
+    })
+    setActivePicker(null)
+  }
+
+  function addPositionToOption(partIdx: number, optionIdx: number, practiceId: string) {
+    setRelationForm(f => {
+      const next = f.parts.map((part, pi) => {
+        if (pi !== partIdx) return part
+        return part.map((opt, oi) => {
+          if (oi !== optionIdx) return opt
+          if (opt.includes(practiceId)) return opt  // no dupes within Option
+          return [...opt, practiceId]
+        })
+      })
+      return { ...f, parts: next }
+    })
+  }
+
+  function removePosition(partIdx: number, optionIdx: number, posIdx: number) {
+    setRelationForm(f => {
+      const next = f.parts.map((part, pi) => {
+        if (pi !== partIdx) return part
+        return part.map((opt, oi) => {
+          if (oi !== optionIdx) return opt
+          return opt.filter((_, i) => i !== posIdx)
+        })
+      })
+      return { ...f, parts: next }
+    })
+  }
+
+  // Flatten parts to the set of practice_ids the SE has already placed
+  // anywhere in this Relation — used to grey-out already-picked entries
+  // in the per-Option dropdown.
+  function practiceIdsInRelationForm(): Set<string> {
+    const out = new Set<string>()
+    for (const part of relationForm.parts) {
+      for (const opt of part) {
+        for (const pid of opt) out.add(pid)
+      }
+    }
+    return out
+  }
+
+  // Total practices picked across the whole structure. Save requires
+  // ≥ 2 (a Relation of 1 practice has no joining semantic).
+  function totalPickedInForm(): number {
+    let n = 0
+    for (const part of relationForm.parts) {
+      for (const opt of part) {
+        n += opt.length
+      }
+    }
+    return n
+  }
+
+  // Pretty label for an AND relation's full structure. Builds the
+  // bracketed expression "(A+B) or (C) or (D) + (P or Q) + ..." that the
+  // backend stores as `expression`. For OR the structure has a single
+  // Part; the joining string between Parts is unused. Compound (size>1)
+  // Options are wrapped in parens; singleton Options stay bare.
+  function buildExpression(type: 'AND' | 'OR', parts: string[][][], tlId: string): string {
     const labelFor = (pid: string): string => {
       const p = (practiceMap[tlId] || []).find(x => x.id === pid)
       if (!p) return pid.slice(0, 8)
       return [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
     }
-    return picked.map(labelFor).join(type === 'AND' ? ' AND ' : ' OR ')
+    const partTexts: string[] = []
+    for (const part of parts) {
+      const optTexts: string[] = []
+      for (const opt of part) {
+        if (opt.length === 0) continue
+        if (opt.length === 1) optTexts.push(labelFor(opt[0]))
+        else optTexts.push('(' + opt.map(labelFor).join(' + ') + ')')
+      }
+      if (optTexts.length === 0) continue
+      const partText = optTexts.length === 1 ? optTexts[0] : optTexts.join(' or ')
+      partTexts.push(partText)
+    }
+    if (partTexts.length === 0) return ''
+    if (type === 'OR') return partTexts.join(' or ')
+    // AND outer joining
+    return partTexts.length === 1 ? partTexts[0] : partTexts.join(' + ')
   }
 
   async function handleSaveRelation(e: FormEvent) {
     e.preventDefault()
     if (!showAddRelation) return
-    if (relationForm.picked.length < 2) {
+    if (totalPickedInForm() < 2) {
       setRelationError('Pick at least 2 practices for a Relation.')
+      return
+    }
+    // Drop empty Options before submit (an Option with zero positions
+    // is meaningless and the validator will reject it). Then drop empty
+    // Parts (no surviving Options).
+    const cleanedParts: string[][][] = []
+    for (const part of relationForm.parts) {
+      const cleanedPart = part.filter(opt => opt.length > 0)
+      if (cleanedPart.length > 0) cleanedParts.push(cleanedPart)
+    }
+    if (cleanedParts.length === 0) {
+      setRelationError('At least one Option must have practices.')
       return
     }
     setSavingRelation(true); setRelationError('')
     const tlId = showAddRelation
     const expression = relationForm.expression.trim() ||
-      buildRelationExpressionText(relationForm.relation_type, relationForm.picked, tlId)
+      buildExpression(relationForm.relation_type, cleanedParts, tlId)
     try {
       await api.post(
         `/advisory/global/packages/${id}/timelines/${tlId}/relations`,
         {
           relation_type: relationForm.relation_type,
-          parts: packRelationParts(relationForm.relation_type, relationForm.picked),
+          parts: cleanedParts,
           expression,
         },
       )
@@ -1442,25 +1563,29 @@ export default function GlobalPackageDetailPage() {
                         ) : (
                           <div className="space-y-2">
                             {relationsByTimeline[tl.id].map(rel => {
-                              // For 39B simple AND/OR display: pull each practice's L1 › L2
-                              // label out of the timeline's practiceMap.
+                              // Batch 39C: bracketed walker handles mixed AND-OR shapes.
+                              // parts × options × positions → "(A+B) or (C) or (D) + ..."
                               const labelFor = (pid: string): string => {
                                 const p = (practiceMap[tl.id] || []).find(x => x.id === pid)
                                 if (!p) return pid.slice(0, 8)
                                 return [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
                               }
-                              // Flatten parts → text per the relation_type. Pure shapes
-                              // (one Part with one Option, or one Part with many 1-position
-                              // Options) read cleanly as "A AND B" / "A OR B". Mixed shapes
-                              // will render via the proper bracketed walker in 39C.
-                              const allPracticeIds: string[] = []
-                              for (const part of rel.parts) {
-                                for (const opt of part) {
-                                  for (const pid of opt) allPracticeIds.push(pid)
+                              const renderParts = (): string => {
+                                const partTexts: string[] = []
+                                for (const part of rel.parts) {
+                                  const optTexts: string[] = []
+                                  for (const opt of part) {
+                                    if (opt.length === 0) continue
+                                    if (opt.length === 1) optTexts.push(labelFor(opt[0]))
+                                    else optTexts.push('(' + opt.map(labelFor).join(' + ') + ')')
+                                  }
+                                  if (optTexts.length === 0) continue
+                                  partTexts.push(optTexts.length === 1 ? optTexts[0] : optTexts.join(' or '))
                                 }
+                                const outer = rel.relation_type === 'OR' ? ' or ' : ' + '
+                                return partTexts.join(outer)
                               }
-                              const joiner = rel.relation_type === 'AND' ? ' AND ' : ' OR '
-                              const text = rel.expression || allPracticeIds.map(labelFor).join(joiner)
+                              const text = rel.expression || renderParts()
                               const typeColour = rel.relation_type === 'AND'
                                 ? 'bg-blue-100 text-blue-700'
                                 : rel.relation_type === 'OR'
@@ -2112,17 +2237,28 @@ export default function GlobalPackageDetailPage() {
           </div>
         )}
 
-        {/* Add Relation Modal — Batch 39B (2026-05-15). Pure AND / pure OR
-            authoring. Mixed AND-OR + IF land in 39C / 39D and will extend
-            this same modal. */}
+        {/* Add Relation Modal — Batch 39C (2026-05-15). Full mixed AND-OR
+            authoring via the Parts → Options → Positions builder. Outer
+            joining is AND (with multi-Part) or OR (single Part, multi-Option).
+            Each Option is a compound AND-group of positions (bounded by the
+            "one compound Option per Part" backend rule). IF + Conditional
+            Question land in 39D. */}
         {showAddRelation && (() => {
           const tlId = showAddRelation
           const tl = timelines.find(t => t.id === tlId)
           const practices = practiceMap[tlId] || []
           const alreadyIn = practiceIdsInAnyRelation(tlId)
+          const usedInForm = practiceIdsInRelationForm()
+          const total = totalPickedInForm()
+          const labelFor = (pid: string): string => {
+            const p = practices.find(x => x.id === pid)
+            if (!p) return pid.slice(0, 8)
+            return [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
+          }
+          const isAnd = relationForm.relation_type === 'AND'
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90vh] flex flex-col">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
                 <div className="p-6 border-b border-slate-100">
                   <h2 className="font-bold text-slate-900">Add Relation</h2>
                   {tl && (
@@ -2132,8 +2268,9 @@ export default function GlobalPackageDetailPage() {
                   )}
                 </div>
                 <form onSubmit={handleSaveRelation} className="p-6 space-y-4 overflow-y-auto">
+                  {/* Type radio — IF lands in 39D. */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Type</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Outer joining</label>
                     <div className="flex gap-2">
                       {(['AND', 'OR'] as const).map(t => (
                         <label key={t}
@@ -2151,77 +2288,171 @@ export default function GlobalPackageDetailPage() {
                       ))}
                     </div>
                     <p className="text-[11px] text-slate-500 mt-2">
-                      {relationForm.relation_type === 'AND'
-                        ? 'All picked practices must be applied together. The dealer fulfils every one.'
-                        : 'The dealer picks one of the listed practices (any single option satisfies the relation).'}
+                      {isAnd
+                        ? 'AND — every Group must be satisfied. Use multiple Groups for parallel requirements like "(Insecticide A or B) + (Foliar nutrient P or Q)".'
+                        : 'OR — the dealer fulfils any one of the listed alternatives. Compound alternatives use an AND-group inside one Option.'}
                     </p>
                   </div>
 
+                  {/* Structure builder */}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Practices ({relationForm.picked.length} picked)
+                      Structure <span className="text-slate-400 font-normal">({total} practice{total === 1 ? '' : 's'} placed)</span>
                     </label>
                     {practices.length === 0 ? (
                       <p className="text-xs text-slate-400 italic">
                         No practices on this Timeline yet — add practices first, then come back.
                       </p>
                     ) : (
-                      <div className="space-y-1 max-h-72 overflow-y-auto border border-slate-100 rounded-lg p-2">
-                        {practices.map(p => {
-                          const inOther = alreadyIn.has(p.id)
-                          const order = relationForm.picked.indexOf(p.id)
-                          const isPicked = order >= 0
-                          const label = [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
-                          return (
-                            <label key={p.id}
-                              className={`flex items-center gap-2 text-xs rounded px-2 py-1.5 ${
-                                inOther
-                                  ? 'opacity-50 cursor-not-allowed bg-slate-50'
-                                  : isPicked
-                                    ? 'bg-blue-50 cursor-pointer'
-                                    : 'hover:bg-slate-50 cursor-pointer'
-                              }`}>
-                              <input type="checkbox"
-                                checked={isPicked}
-                                disabled={inOther}
-                                onChange={() => toggleRelationPick(p.id)}
-                                className="w-3.5 h-3.5 rounded" />
-                              <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>
-                                {p.l0_type}
-                              </span>
-                              <span className="flex-1 min-w-0 truncate text-slate-700">{label}</span>
-                              {isPicked && (
-                                <span className="text-[10px] text-blue-600 font-medium shrink-0">
-                                  #{order + 1}
+                      <div className="space-y-3">
+                        {relationForm.parts.map((part, partIdx) => (
+                          <div key={partIdx}>
+                            {partIdx > 0 && isAnd && (
+                              <div className="flex items-center gap-2 my-2">
+                                <div className="flex-1 border-t border-blue-200" />
+                                <span className="text-[10px] uppercase tracking-wider text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded">AND</span>
+                                <div className="flex-1 border-t border-blue-200" />
+                              </div>
+                            )}
+                            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                                  {isAnd ? `Group ${partIdx + 1}` : 'Group'}
                                 </span>
-                              )}
-                              {inOther && !isPicked && (
-                                <span className="text-[10px] text-slate-400 italic shrink-0">in another</span>
-                              )}
-                            </label>
-                          )
-                        })}
+                                {relationForm.parts.length > 1 && (
+                                  <button type="button"
+                                    onClick={() => removePart(partIdx)}
+                                    className="text-slate-300 hover:text-red-500"
+                                    title="Remove Group">
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
+                              {part.map((opt, optIdx) => {
+                                const pickerOpen = activePicker?.part === partIdx && activePicker?.option === optIdx
+                                return (
+                                  <div key={optIdx}>
+                                    {optIdx > 0 && (
+                                      <div className="flex items-center gap-2 my-1.5">
+                                        <div className="flex-1 border-t border-amber-200" />
+                                        <span className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded">OR</span>
+                                        <div className="flex-1 border-t border-amber-200" />
+                                      </div>
+                                    )}
+                                    <div className="bg-white border border-slate-200 rounded-lg p-2.5">
+                                      <div className="flex items-start gap-2">
+                                        <span className="text-[10px] uppercase tracking-wide text-slate-500 font-medium mt-1 shrink-0">
+                                          Opt {optIdx + 1}
+                                        </span>
+                                        <div className="flex-1 min-w-0">
+                                          {opt.length === 0 ? (
+                                            <p className="text-[11px] text-slate-400 italic">No practices yet — add one below.</p>
+                                          ) : (
+                                            <div className="flex flex-wrap gap-1.5">
+                                              {opt.map((pid, posIdx) => (
+                                                <span key={posIdx}
+                                                  className="inline-flex items-center gap-1 text-[11px] bg-blue-50 text-blue-700 rounded-full pl-2.5 pr-1 py-0.5">
+                                                  {opt.length > 1 && (
+                                                    <span className="text-blue-400">#{posIdx + 1}</span>
+                                                  )}
+                                                  <span>{labelFor(pid)}</span>
+                                                  <button type="button"
+                                                    onClick={() => removePosition(partIdx, optIdx, posIdx)}
+                                                    className="text-blue-400 hover:text-red-500 ml-0.5 leading-none"
+                                                    title="Remove from Option">
+                                                    ×
+                                                  </button>
+                                                </span>
+                                              ))}
+                                            </div>
+                                          )}
+                                          {/* Per-Option picker dropdown */}
+                                          {pickerOpen && (
+                                            <div className="mt-2 border border-blue-200 rounded-lg bg-white max-h-48 overflow-y-auto">
+                                              {practices
+                                                .filter(p => !alreadyIn.has(p.id))
+                                                .filter(p => !usedInForm.has(p.id) || opt.includes(p.id))
+                                                .map(p => {
+                                                  const inThisOption = opt.includes(p.id)
+                                                  if (inThisOption) return null
+                                                  return (
+                                                    <button key={p.id} type="button"
+                                                      onClick={() => {
+                                                        addPositionToOption(partIdx, optIdx, p.id)
+                                                        setActivePicker(null)
+                                                      }}
+                                                      className="w-full flex items-center gap-2 text-left text-xs px-2 py-1.5 hover:bg-slate-50">
+                                                      <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>
+                                                        {p.l0_type}
+                                                      </span>
+                                                      <span className="flex-1 min-w-0 truncate text-slate-700">{labelFor(p.id)}</span>
+                                                    </button>
+                                                  )
+                                                })}
+                                              {practices.filter(p => !alreadyIn.has(p.id) && !usedInForm.has(p.id)).length === 0 && (
+                                                <p className="text-[11px] text-slate-400 italic px-2 py-2">
+                                                  No more eligible practices on this Timeline.
+                                                </p>
+                                              )}
+                                            </div>
+                                          )}
+                                          <div className="flex items-center gap-3 mt-1.5">
+                                            <button type="button"
+                                              onClick={() => setActivePicker(
+                                                pickerOpen ? null : { part: partIdx, option: optIdx },
+                                              )}
+                                              className="text-[11px] text-blue-600 hover:underline">
+                                              {pickerOpen ? 'Cancel' : '+ Practice'}
+                                            </button>
+                                            {part.length > 1 && (
+                                              <button type="button"
+                                                onClick={() => removeOption(partIdx, optIdx)}
+                                                className="text-[11px] text-slate-400 hover:text-red-500">
+                                                Remove Option
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                              <button type="button"
+                                onClick={() => addOption(partIdx)}
+                                className="mt-2 text-xs font-medium text-amber-700 hover:underline">
+                                + Add another Option (OR alternative)
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {isAnd && (
+                          <button type="button"
+                            onClick={addPart}
+                            className="w-full text-sm font-medium px-3 py-2 rounded-lg border border-dashed border-blue-300 text-blue-600 hover:bg-blue-50">
+                            + Add another Group (AND outer)
+                          </button>
+                        )}
                       </div>
                     )}
-                    <p className="text-[11px] text-slate-500 mt-2">
-                      Order matters for AND (positions are ordered). A practice already in
-                      another Relation on this Timeline is shown disabled.
-                    </p>
                   </div>
 
+                  {/* Expression — auto-built from structure unless overridden. */}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
                       Expression <span className="text-slate-400 font-normal">(optional)</span>
                     </label>
                     <input type="text"
-                      placeholder={buildRelationExpressionText(
-                        relationForm.relation_type, relationForm.picked, tlId,
-                      ) || '— auto-generated from picks —'}
+                      placeholder={buildExpression(
+                        relationForm.relation_type, relationForm.parts, tlId,
+                      ) || '— auto-generated from structure —'}
                       value={relationForm.expression}
                       onChange={e => setRelationForm(f => ({ ...f, expression: e.target.value }))}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     <p className="text-[11px] text-slate-400 mt-1">
-                      Human-readable label for the Relation. Auto-generated from picks if blank.
+                      Human-readable label for the Relation. Auto-built from the structure if blank.
                     </p>
                   </div>
 
@@ -2234,7 +2465,7 @@ export default function GlobalPackageDetailPage() {
                       Cancel
                     </button>
                     <button type="submit"
-                      disabled={savingRelation || relationForm.picked.length < 2}
+                      disabled={savingRelation || total < 2}
                       className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
                       {savingRelation ? 'Saving…' : 'Save Relation'}
                     </button>
