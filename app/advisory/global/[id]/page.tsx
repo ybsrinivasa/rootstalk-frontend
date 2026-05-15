@@ -758,14 +758,71 @@ export default function GlobalPackageDetailPage() {
     return chainIsPureOR() || chainIsPureAND()
   }
 
-  // ADD TO LIST gating: chain must have at least 2 slots AND all ops
-  // identical (pure AND or pure OR). Per user spec — the moment ops
-  // mix, ADD TO LIST disables and the SE must SAVE.
-  function canAddToList(): boolean {
-    return chainSlots.length >= 2 && chainIsPure()
+  // Batch 39C-checks2 (2026-05-15) — explicit Gate-1 echo at ADD TO
+  // LIST / SAVE time. Mirrors _check_and_input_only +
+  // _check_or_l1_restriction so the SE sees the same constraint the
+  // backend would otherwise raise as a 422 on Save. Returns the
+  // human-readable failure reason or null if the chain is valid.
+  function gate1Failure(tlId: string): string | null {
+    const practices = practiceMap[tlId] || []
+    const resolved: Array<{ l0: string; l1: string | null; special: boolean }> = []
+    for (const slot of chainSlots) {
+      if (slot.startsWith('list:')) {
+        const item = listItems.find(i => i.id === slot.slice(5))
+        if (!item) continue
+        for (const sub of item.slots) {
+          if (sub.startsWith('list:')) continue
+          const p = practices.find(x => x.id === sub)
+          if (p) resolved.push({ l0: p.l0_type, l1: p.l1_type, special: p.is_special_input })
+        }
+      } else {
+        const p = practices.find(x => x.id === slot)
+        if (p) resolved.push({ l0: p.l0_type, l1: p.l1_type, special: p.is_special_input })
+      }
+    }
+    for (const r of resolved) {
+      if (r.l0 !== 'INPUT') {
+        return 'Relations are L0:INPUT only — drop the non-input slot.'
+      }
+    }
+    if (chainIsPureOR()) {
+      const l1s = new Set<string>()
+      for (const r of resolved) {
+        if (r.special) continue
+        if (r.l1) l1s.add(r.l1)
+      }
+      if (l1s.size > 1) {
+        return `OR is restricted to a single L1 group (chain spans ${[...l1s].join(', ')}).`
+      }
+    }
+    return null
   }
-  function canSave(): boolean {
-    return chainSlots.length >= 2
+
+  // ADD TO LIST gating: chain must have at least 2 slots AND all ops
+  // identical (pure AND or pure OR) AND pass Gate-1.
+  function canAddToList(tlId: string): boolean {
+    if (chainSlots.length < 2) return false
+    if (!chainIsPure()) return false
+    if (gate1Failure(tlId)) return false
+    return true
+  }
+  function addToListBlockedReason(tlId: string): string {
+    if (chainSlots.length < 2) return 'Pick at least 2 slots first.'
+    if (!chainIsPure()) return 'ADD TO LIST needs a single operator type (all AND or all OR).'
+    const f = gate1Failure(tlId)
+    if (f) return f
+    return 'Save the current chain as a reusable List item.'
+  }
+  function canSave(tlId: string): boolean {
+    if (chainSlots.length < 2) return false
+    if (gate1Failure(tlId)) return false
+    return true
+  }
+  function saveBlockedReason(tlId: string): string {
+    if (chainSlots.length < 2) return 'A Relation needs at least 2 slots.'
+    const f = gate1Failure(tlId)
+    if (f) return f
+    return ''
   }
 
   // Batch 39C-checks (2026-05-15): the backend's relation_validation
@@ -910,8 +967,9 @@ export default function GlobalPackageDetailPage() {
   }
 
   function addCurrentChainToList() {
-    if (!canAddToList()) {
-      setRelationError('ADD TO LIST needs ≥ 2 slots with a single operator type (all AND or all OR).')
+    if (!showAddRelation) return
+    if (!canAddToList(showAddRelation)) {
+      setRelationError(addToListBlockedReason(showAddRelation))
       return
     }
     const id = `L${listItems.length + 1}`
@@ -1056,8 +1114,8 @@ export default function GlobalPackageDetailPage() {
   async function handleSaveRelation(e: FormEvent) {
     e.preventDefault()
     if (!showAddRelation) return
-    if (!canSave()) {
-      setRelationError('A Relation needs at least 2 slots.')
+    if (!canSave(showAddRelation)) {
+      setRelationError(saveBlockedReason(showAddRelation) || 'A Relation needs at least 2 slots.')
       return
     }
     setSavingRelation(true); setRelationError('')
@@ -2633,9 +2691,9 @@ export default function GlobalPackageDetailPage() {
                           <div className="flex flex-wrap items-center gap-2 pt-1">
                             <button type="button"
                               onClick={addCurrentChainToList}
-                              disabled={!canAddToList()}
+                              disabled={!canAddToList(tlId)}
                               className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                              title={canAddToList() ? 'Save the current chain as a reusable List item' : 'ADD TO LIST needs ≥ 2 slots with a single operator type (all AND or all OR).'}>
+                              title={addToListBlockedReason(tlId)}>
                               + Add to List
                             </button>
                             <button type="button"
@@ -2708,7 +2766,8 @@ export default function GlobalPackageDetailPage() {
                       Cancel
                     </button>
                     <button type="submit"
-                      disabled={savingRelation || !canSave()}
+                      disabled={savingRelation || !canSave(tlId)}
+                      title={saveBlockedReason(tlId)}
                       className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
                       {savingRelation ? 'Saving…' : 'SAVE Relation'}
                     </button>
