@@ -196,20 +196,20 @@ export default function GlobalPackageDetailPage() {
   // shapes only in this sub-batch; mixed AND-OR + IF land in 39C/39D.
   const [relationsByTimeline, setRelationsByTimeline] = useState<Record<string, RelationOut[]>>({})
   const [showAddRelation, setShowAddRelation] = useState<string | null>(null)
-  // Batch 39C upgrade — the form carries the full 3-D parts shape so
-  // mixed AND-OR is authorable directly. AND is multi-Part (Parts AND'd
-  // at the top), OR collapses to a single Part. Both allow multi-Option
-  // within a Part (alternatives OR'd) and multi-Position within an
-  // Option (compound AND-group, capped at one compound per Part by the
-  // backend validator).
+  // Batch 39C-rev (2026-05-15) — Add-to-List builder. The SE picks
+  // practices in the palette (pick-order tracked for AND positions),
+  // chooses Single vs Compound, clicks Add to List, and watches the
+  // Group(s) build up on the right. Gate-1 echoes the backend rules
+  // client-side so most mistakes get caught before Save.
   const [relationForm, setRelationForm] = useState<{
     relation_type: 'AND' | 'OR'
     parts: string[][][]  // parts[part][option][position] = practice_id
     expression: string
-  }>({ relation_type: 'AND', parts: [[[]]], expression: '' })
-  // Which Option's inline "+ Practice" dropdown is currently open. Only
-  // one picker can be open at a time. `null` = nothing open.
-  const [activePicker, setActivePicker] = useState<{ part: number; option: number } | null>(null)
+  }>({ relation_type: 'AND', parts: [[]], expression: '' })
+  // Pick-order palette: each practice_id is appended on first click,
+  // removed on a second click. AND positions are stored in this order.
+  const [palette, setPalette] = useState<string[]>([])
+  const [selectionMode, setSelectionMode] = useState<'SINGLE' | 'COMPOUND'>('SINGLE')
   const [savingRelation, setSavingRelation] = useState(false)
   const [relationError, setRelationError] = useState('')
 
@@ -683,90 +683,148 @@ export default function GlobalPackageDetailPage() {
 
   function openAddRelation(tlId: string) {
     setShowAddRelation(tlId)
-    setRelationForm({ relation_type: 'AND', parts: [[[]]], expression: '' })
-    setActivePicker({ part: 0, option: 0 })
+    // parts: [[]] = one empty Group ready to receive Options. The
+    // builder always operates on the LAST Part as the "current Group".
+    setRelationForm({ relation_type: 'AND', parts: [[]], expression: '' })
+    setPalette([])
+    setSelectionMode('SINGLE')
     setRelationError('')
   }
 
-  // ── Batch 39C structure-builder helpers ────────────────────────────────────
-  // The 3-D shape is parts[part][option][position]; mutations are
-  // immutable copies so React picks up state changes cleanly.
+  // ── Batch 39C-rev: Add-to-List builder ─────────────────────────────────────
 
-  function addPart() {
-    setRelationForm(f => {
-      const next = [...f.parts, [[]]]
-      return { ...f, parts: next }
-    })
-    // Move the picker to the freshly added Part so the SE picks into it
-    // by default.
-    setRelationForm(f => {
-      setActivePicker({ part: f.parts.length - 1, option: 0 })
-      return f
+  function togglePaletteItem(practiceId: string) {
+    setPalette(prev => {
+      const i = prev.indexOf(practiceId)
+      if (i >= 0) return [...prev.slice(0, i), ...prev.slice(i + 1)]
+      return [...prev, practiceId]
     })
   }
 
-  function removePart(partIdx: number) {
-    setRelationForm(f => {
-      if (f.parts.length <= 1) return f  // never below 1 Part
-      const next = f.parts.filter((_, i) => i !== partIdx)
-      return { ...f, parts: next }
-    })
-    setActivePicker(null)
+  // Gate-1 client-side echo — same rules as
+  // `validate_gate1_option` in app/services/relations.py. Special
+  // inputs are exempt from duplicate checks server-side too. Returns
+  // null if OK, else a user-facing error message.
+  function gate1Check(
+    newOption: string[],
+    existingOptions: string[][],
+    tlId: string,
+  ): string | null {
+    if (newOption.length === 0) return 'Selection is empty.'
+    const practices = practiceMap[tlId] || []
+    const isSpecial = (pid: string): boolean => {
+      const p = practices.find(x => x.id === pid)
+      return !!p?.is_special_input
+    }
+    const nonSpecial = (xs: string[]): string[] => xs.filter(x => !isSpecial(x))
+    // 1) No duplicate inputs within the new Option (after excluding specials).
+    const innerSet = new Set<string>()
+    for (const pid of nonSpecial(newOption)) {
+      if (innerSet.has(pid)) {
+        return 'The new Option has a duplicate practice (special inputs excepted).'
+      }
+      innerSet.add(pid)
+    }
+    // 2) New Option must not duplicate an existing Option's set exactly.
+    const newSet = JSON.stringify(nonSpecial(newOption).slice().sort())
+    for (const o of existingOptions) {
+      if (JSON.stringify(nonSpecial(o).slice().sort()) === newSet) {
+        return 'This exact set of practices is already an Option in the current Group.'
+      }
+    }
+    // 3) Only one compound Option (size > 1) allowed per Group.
+    if (nonSpecial(newOption).length > 1) {
+      for (const o of existingOptions) {
+        if (nonSpecial(o).length > 1) {
+          return 'A Group already contains an AND-group Option; only one compound Option is allowed per Group.'
+        }
+      }
+    }
+    return null
   }
 
-  function addOption(partIdx: number) {
+  function addToList() {
+    if (!showAddRelation) return
+    if (palette.length === 0) {
+      setRelationError('Pick at least one practice before adding to the List.')
+      return
+    }
+    const tlId = showAddRelation
     setRelationForm(f => {
-      const next = f.parts.map((p, i) => i === partIdx ? [...p, []] : p)
-      return { ...f, parts: next }
+      const parts = f.parts.map(p => p.slice())
+      const cur = parts[parts.length - 1]  // current (last) Group
+      // SINGLE: each picked practice → its own Option (1 position).
+      // COMPOUND: all picked practices → one Option of N positions
+      // (the bracketed AND-group).
+      const newOptions: string[][] = selectionMode === 'COMPOUND'
+        ? [palette.slice()]
+        : palette.map(pid => [pid])
+      // Run Gate-1 against the current Group's existing Options for
+      // each new Option to be added. Reject the whole batch on the
+      // first failure so the SE knows precisely what hit it.
+      const existing = cur.slice()
+      for (const opt of newOptions) {
+        const err = gate1Check(opt, existing, tlId)
+        if (err) { setRelationError(err); return f }
+        existing.push(opt)
+      }
+      parts[parts.length - 1] = existing
+      setRelationError('')
+      return { ...f, parts }
     })
+    // Successful add → clear palette + reset mode for the next pass.
+    setPalette([])
+    setSelectionMode('SINGLE')
+  }
+
+  function startNewGroup() {
     setRelationForm(f => {
-      const newOptionIdx = (f.parts[partIdx]?.length || 1) - 1
-      setActivePicker({ part: partIdx, option: newOptionIdx })
-      return f
+      const cur = f.parts[f.parts.length - 1]
+      if (!cur || cur.length === 0) {
+        setRelationError('Add at least one Option to the current Group before starting a new one.')
+        return f
+      }
+      setRelationError('')
+      return { ...f, parts: [...f.parts, []] }
     })
   }
 
-  function removeOption(partIdx: number, optionIdx: number) {
+  function removeOptionFromGroup(partIdx: number, optIdx: number) {
     setRelationForm(f => {
-      const part = f.parts[partIdx]
-      if (!part || part.length <= 1) return f  // never below 1 Option
-      const newPart = part.filter((_, i) => i !== optionIdx)
-      const next = f.parts.map((p, i) => i === partIdx ? newPart : p)
-      return { ...f, parts: next }
-    })
-    setActivePicker(null)
-  }
-
-  function addPositionToOption(partIdx: number, optionIdx: number, practiceId: string) {
-    setRelationForm(f => {
-      const next = f.parts.map((part, pi) => {
-        if (pi !== partIdx) return part
-        return part.map((opt, oi) => {
-          if (oi !== optionIdx) return opt
-          if (opt.includes(practiceId)) return opt  // no dupes within Option
-          return [...opt, practiceId]
-        })
+      const parts = f.parts.map((p, pi) => {
+        if (pi !== partIdx) return p
+        return p.filter((_, oi) => oi !== optIdx)
       })
-      return { ...f, parts: next }
+      return { ...f, parts }
     })
+    setRelationError('')
   }
 
-  function removePosition(partIdx: number, optionIdx: number, posIdx: number) {
+  function removeGroup(partIdx: number) {
     setRelationForm(f => {
-      const next = f.parts.map((part, pi) => {
-        if (pi !== partIdx) return part
-        return part.map((opt, oi) => {
-          if (oi !== optionIdx) return opt
-          return opt.filter((_, i) => i !== posIdx)
-        })
-      })
-      return { ...f, parts: next }
+      if (f.parts.length <= 1) {
+        // Last Group — clear its Options instead of dropping the
+        // Group itself.
+        return { ...f, parts: [[]] }
+      }
+      const parts = f.parts.filter((_, i) => i !== partIdx)
+      return { ...f, parts }
     })
+    setRelationError('')
   }
 
-  // Flatten parts to the set of practice_ids the SE has already placed
-  // anywhere in this Relation — used to grey-out already-picked entries
-  // in the per-Option dropdown.
+  // Total practices placed across the whole structure (excluding empty
+  // Groups). Save requires ≥ 2.
+  function totalPickedInForm(): number {
+    let n = 0
+    for (const part of relationForm.parts) {
+      for (const opt of part) n += opt.length
+    }
+    return n
+  }
+
+  // Practices already placed anywhere in the form — disabled in the
+  // palette so the same practice can't be picked twice for this Relation.
   function practiceIdsInRelationForm(): Set<string> {
     const out = new Set<string>()
     for (const part of relationForm.parts) {
@@ -775,18 +833,6 @@ export default function GlobalPackageDetailPage() {
       }
     }
     return out
-  }
-
-  // Total practices picked across the whole structure. Save requires
-  // ≥ 2 (a Relation of 1 practice has no joining semantic).
-  function totalPickedInForm(): number {
-    let n = 0
-    for (const part of relationForm.parts) {
-      for (const opt of part) {
-        n += opt.length
-      }
-    }
-    return n
   }
 
   // Pretty label for an AND relation's full structure. Builds the
@@ -2237,11 +2283,11 @@ export default function GlobalPackageDetailPage() {
           </div>
         )}
 
-        {/* Add Relation Modal — Batch 39C (2026-05-15). Full mixed AND-OR
-            authoring via the Parts → Options → Positions builder. Outer
-            joining is AND (with multi-Part) or OR (single Part, multi-Option).
-            Each Option is a compound AND-group of positions (bounded by the
-            "one compound Option per Part" backend rule). IF + Conditional
+        {/* Add Relation Modal — Batch 39C-rev (2026-05-15). Add-to-List
+            builder: pick practices in the palette, choose Single vs
+            Compound, click Add to List, the new Option(s) land in the
+            current Group. Gate-1 echoes the backend rules client-side
+            so most mistakes get caught before Save. IF + Conditional
             Question land in 39D. */}
         {showAddRelation && (() => {
           const tlId = showAddRelation
@@ -2256,9 +2302,13 @@ export default function GlobalPackageDetailPage() {
             return [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
           }
           const isAnd = relationForm.relation_type === 'AND'
+          const liveExpression = buildExpression(
+            relationForm.relation_type, relationForm.parts, tlId,
+          )
+          const canCompound = palette.length >= 2
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col">
                 <div className="p-6 border-b border-slate-100">
                   <h2 className="font-bold text-slate-900">Add Relation</h2>
                   {tl && (
@@ -2267,208 +2317,252 @@ export default function GlobalPackageDetailPage() {
                     </p>
                   )}
                 </div>
-                <form onSubmit={handleSaveRelation} className="p-6 space-y-4 overflow-y-auto">
-                  {/* Type radio — IF lands in 39D. */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Outer joining</label>
-                    <div className="flex gap-2">
-                      {(['AND', 'OR'] as const).map(t => (
-                        <label key={t}
-                          className={`flex-1 flex items-center justify-center gap-2 border rounded-xl px-3 py-2 text-sm cursor-pointer ${
-                            relationForm.relation_type === t
-                              ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
-                              : 'border-slate-200 text-slate-700 hover:border-slate-300'
-                          }`}>
-                          <input type="radio" name="relation_type" value={t}
-                            checked={relationForm.relation_type === t}
-                            onChange={() => setRelationForm(f => ({ ...f, relation_type: t }))}
-                            className="hidden" />
-                          {t}
-                        </label>
-                      ))}
+                <form onSubmit={handleSaveRelation} className="overflow-y-auto">
+                  {/* Outer joining + live expression */}
+                  <div className="px-6 pt-5 pb-3 space-y-3 border-b border-slate-100">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Outer joining</label>
+                      <div className="flex gap-2">
+                        {(['AND', 'OR'] as const).map(t => (
+                          <label key={t}
+                            className={`flex-1 flex items-center justify-center gap-2 border rounded-xl px-3 py-2 text-sm cursor-pointer ${
+                              relationForm.relation_type === t
+                                ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                                : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                            }`}>
+                            <input type="radio" name="relation_type" value={t}
+                              checked={relationForm.relation_type === t}
+                              onChange={() => {
+                                if (relationForm.parts.some(p => p.length > 0) &&
+                                    !confirm('Switch outer joining? The current List will be cleared.')) {
+                                  return
+                                }
+                                setRelationForm(f => ({ ...f, relation_type: t, parts: [[]] }))
+                                setPalette([])
+                                setRelationError('')
+                              }}
+                              className="hidden" />
+                            {t}
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-2">
+                        {isAnd
+                          ? 'AND — every Group in the List must be satisfied. Use "+ Start new Group" for parallel requirements like "(A or B) + (P or Q)".'
+                          : 'OR — the dealer fulfils any one Option in the single Group.'}
+                      </p>
                     </div>
-                    <p className="text-[11px] text-slate-500 mt-2">
-                      {isAnd
-                        ? 'AND — every Group must be satisfied. Use multiple Groups for parallel requirements like "(Insecticide A or B) + (Foliar nutrient P or Q)".'
-                        : 'OR — the dealer fulfils any one of the listed alternatives. Compound alternatives use an AND-group inside one Option.'}
-                    </p>
+                    <div>
+                      <span className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold">Live expression</span>
+                      <div className="mt-1 border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 text-xs font-mono text-slate-700 min-h-[2rem] break-words">
+                        {liveExpression || <span className="text-slate-400 italic font-sans">— pick practices and Add to List —</span>}
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Structure builder */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Structure <span className="text-slate-400 font-normal">({total} practice{total === 1 ? '' : 's'} placed)</span>
-                    </label>
-                    {practices.length === 0 ? (
-                      <p className="text-xs text-slate-400 italic">
-                        No practices on this Timeline yet — add practices first, then come back.
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {relationForm.parts.map((part, partIdx) => (
-                          <div key={partIdx}>
-                            {partIdx > 0 && isAnd && (
-                              <div className="flex items-center gap-2 my-2">
-                                <div className="flex-1 border-t border-blue-200" />
-                                <span className="text-[10px] uppercase tracking-wider text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded">AND</span>
-                                <div className="flex-1 border-t border-blue-200" />
-                              </div>
-                            )}
-                            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
-                                  {isAnd ? `Group ${partIdx + 1}` : 'Group'}
+                  {/* Two-pane builder */}
+                  {practices.length === 0 ? (
+                    <p className="px-6 py-6 text-xs text-slate-400 italic">
+                      No practices on this Timeline yet — add practices first, then come back.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 px-6 py-5">
+                      {/* LEFT — Practice palette + selection controls */}
+                      <div>
+                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Practices</h3>
+                        <div className="border border-slate-200 rounded-lg max-h-72 overflow-y-auto">
+                          {practices.map(p => {
+                            const inOther = alreadyIn.has(p.id)
+                            const inForm = usedInForm.has(p.id)
+                            const disabled = inOther || inForm
+                            const order = palette.indexOf(p.id)
+                            const isPicked = order >= 0
+                            return (
+                              <label key={p.id}
+                                className={`flex items-center gap-2 text-xs px-2 py-1.5 border-b border-slate-50 last:border-0 ${
+                                  disabled
+                                    ? 'opacity-50 cursor-not-allowed bg-slate-50'
+                                    : isPicked
+                                      ? 'bg-blue-50 cursor-pointer'
+                                      : 'hover:bg-slate-50 cursor-pointer'
+                                }`}>
+                                <input type="checkbox"
+                                  checked={isPicked}
+                                  disabled={disabled}
+                                  onChange={() => togglePaletteItem(p.id)}
+                                  className="w-3.5 h-3.5 rounded" />
+                                <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>
+                                  {p.l0_type}
                                 </span>
-                                {relationForm.parts.length > 1 && (
+                                <span className="flex-1 min-w-0 truncate text-slate-700">{labelFor(p.id)}</span>
+                                {p.is_special_input && (
+                                  <span className="text-[10px] text-yellow-700 bg-yellow-50 px-1 py-0.5 rounded shrink-0">special</span>
+                                )}
+                                {isPicked && (
+                                  <span className="text-[10px] text-blue-600 font-medium shrink-0">#{order + 1}</span>
+                                )}
+                                {inOther && !isPicked && (
+                                  <span className="text-[10px] text-slate-400 italic shrink-0">other</span>
+                                )}
+                                {inForm && !inOther && !isPicked && (
+                                  <span className="text-[10px] text-slate-400 italic shrink-0">added</span>
+                                )}
+                              </label>
+                            )
+                          })}
+                        </div>
+
+                        {/* Selection mode + Add to List */}
+                        <div className="mt-3 border border-slate-200 rounded-lg p-3 bg-slate-50/40">
+                          <p className="text-[11px] text-slate-500 mb-2">
+                            <span className="font-medium text-slate-700">{palette.length}</span> picked
+                            {palette.length > 0 && ` (${palette.map(labelFor).join(', ')})`}
+                          </p>
+                          <div className="flex gap-2 mb-2">
+                            {(['SINGLE', 'COMPOUND'] as const).map(m => {
+                              const isDisabled = m === 'COMPOUND' && !canCompound
+                              return (
+                                <button key={m} type="button"
+                                  disabled={isDisabled}
+                                  onClick={() => setSelectionMode(m)}
+                                  className={`flex-1 text-xs px-2 py-1.5 rounded border ${
+                                    selectionMode === m && !isDisabled
+                                      ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                                      : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                                  } disabled:opacity-40 disabled:cursor-not-allowed`}>
+                                  {m === 'SINGLE' ? 'Single Option(s)' : 'Compound AND-group'}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <p className="text-[11px] text-slate-500 mb-2">
+                            {selectionMode === 'SINGLE'
+                              ? palette.length <= 1
+                                ? 'Adds the picked practice as one Option.'
+                                : `Adds ${palette.length} separate Options to the current Group (OR'd).`
+                              : `Adds one compound Option (${palette.length} positions, AND'd) to the current Group.`}
+                          </p>
+                          <button type="button"
+                            onClick={addToList}
+                            disabled={palette.length === 0}
+                            className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg text-sm disabled:opacity-50">
+                            Add to List
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* RIGHT — current Group(s) view */}
+                      <div>
+                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">
+                          List <span className="text-slate-400 font-normal">({total} practice{total === 1 ? '' : 's'})</span>
+                        </h3>
+                        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                          {relationForm.parts.map((part, partIdx) => (
+                            <div key={partIdx}>
+                              {partIdx > 0 && isAnd && (
+                                <div className="flex items-center gap-2 my-2">
+                                  <div className="flex-1 border-t border-blue-200" />
+                                  <span className="text-[10px] uppercase tracking-wider text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded">AND</span>
+                                  <div className="flex-1 border-t border-blue-200" />
+                                </div>
+                              )}
+                              <div className="border border-slate-200 rounded-xl p-2.5 bg-slate-50/40">
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <span className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold">
+                                    {isAnd ? `Group ${partIdx + 1}` : 'Group'}
+                                  </span>
                                   <button type="button"
-                                    onClick={() => removePart(partIdx)}
+                                    onClick={() => removeGroup(partIdx)}
                                     className="text-slate-300 hover:text-red-500"
-                                    title="Remove Group">
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    title={relationForm.parts.length > 1 ? 'Remove Group' : 'Clear Group'}>
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                     </svg>
                                   </button>
-                                )}
-                              </div>
-                              {part.map((opt, optIdx) => {
-                                const pickerOpen = activePicker?.part === partIdx && activePicker?.option === optIdx
-                                return (
-                                  <div key={optIdx}>
-                                    {optIdx > 0 && (
-                                      <div className="flex items-center gap-2 my-1.5">
-                                        <div className="flex-1 border-t border-amber-200" />
-                                        <span className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded">OR</span>
-                                        <div className="flex-1 border-t border-amber-200" />
-                                      </div>
-                                    )}
-                                    <div className="bg-white border border-slate-200 rounded-lg p-2.5">
-                                      <div className="flex items-start gap-2">
-                                        <span className="text-[10px] uppercase tracking-wide text-slate-500 font-medium mt-1 shrink-0">
-                                          Opt {optIdx + 1}
-                                        </span>
-                                        <div className="flex-1 min-w-0">
-                                          {opt.length === 0 ? (
-                                            <p className="text-[11px] text-slate-400 italic">No practices yet — add one below.</p>
-                                          ) : (
-                                            <div className="flex flex-wrap gap-1.5">
-                                              {opt.map((pid, posIdx) => (
-                                                <span key={posIdx}
-                                                  className="inline-flex items-center gap-1 text-[11px] bg-blue-50 text-blue-700 rounded-full pl-2.5 pr-1 py-0.5">
-                                                  {opt.length > 1 && (
-                                                    <span className="text-blue-400">#{posIdx + 1}</span>
-                                                  )}
-                                                  <span>{labelFor(pid)}</span>
-                                                  <button type="button"
-                                                    onClick={() => removePosition(partIdx, optIdx, posIdx)}
-                                                    className="text-blue-400 hover:text-red-500 ml-0.5 leading-none"
-                                                    title="Remove from Option">
-                                                    ×
-                                                  </button>
-                                                </span>
-                                              ))}
-                                            </div>
-                                          )}
-                                          {/* Per-Option picker dropdown */}
-                                          {pickerOpen && (
-                                            <div className="mt-2 border border-blue-200 rounded-lg bg-white max-h-48 overflow-y-auto">
-                                              {practices
-                                                .filter(p => !alreadyIn.has(p.id))
-                                                .filter(p => !usedInForm.has(p.id) || opt.includes(p.id))
-                                                .map(p => {
-                                                  const inThisOption = opt.includes(p.id)
-                                                  if (inThisOption) return null
-                                                  return (
-                                                    <button key={p.id} type="button"
-                                                      onClick={() => {
-                                                        addPositionToOption(partIdx, optIdx, p.id)
-                                                        setActivePicker(null)
-                                                      }}
-                                                      className="w-full flex items-center gap-2 text-left text-xs px-2 py-1.5 hover:bg-slate-50">
-                                                      <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>
-                                                        {p.l0_type}
-                                                      </span>
-                                                      <span className="flex-1 min-w-0 truncate text-slate-700">{labelFor(p.id)}</span>
-                                                    </button>
-                                                  )
-                                                })}
-                                              {practices.filter(p => !alreadyIn.has(p.id) && !usedInForm.has(p.id)).length === 0 && (
-                                                <p className="text-[11px] text-slate-400 italic px-2 py-2">
-                                                  No more eligible practices on this Timeline.
-                                                </p>
-                                              )}
-                                            </div>
-                                          )}
-                                          <div className="flex items-center gap-3 mt-1.5">
-                                            <button type="button"
-                                              onClick={() => setActivePicker(
-                                                pickerOpen ? null : { part: partIdx, option: optIdx },
-                                              )}
-                                              className="text-[11px] text-blue-600 hover:underline">
-                                              {pickerOpen ? 'Cancel' : '+ Practice'}
-                                            </button>
-                                            {part.length > 1 && (
-                                              <button type="button"
-                                                onClick={() => removeOption(partIdx, optIdx)}
-                                                className="text-[11px] text-slate-400 hover:text-red-500">
-                                                Remove Option
-                                              </button>
+                                </div>
+                                {part.length === 0 ? (
+                                  <p className="text-[11px] text-slate-400 italic">Empty — pick practices and Add to List.</p>
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    {part.map((opt, optIdx) => (
+                                      <div key={optIdx}>
+                                        {optIdx > 0 && (
+                                          <div className="flex items-center gap-2 my-1">
+                                            <div className="flex-1 border-t border-amber-200" />
+                                            <span className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold bg-amber-50 px-1.5 py-0.5 rounded">OR</span>
+                                            <div className="flex-1 border-t border-amber-200" />
+                                          </div>
+                                        )}
+                                        <div className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 flex items-start gap-2">
+                                          <div className="flex-1 min-w-0">
+                                            {opt.length === 1 ? (
+                                              <span className="text-xs text-slate-700">{labelFor(opt[0])}</span>
+                                            ) : (
+                                              <span className="text-xs text-slate-700">
+                                                <span className="text-slate-400">(</span>
+                                                {opt.map((pid, i) => (
+                                                  <span key={i}>
+                                                    {i > 0 && <span className="text-slate-400"> + </span>}
+                                                    {labelFor(pid)}
+                                                  </span>
+                                                ))}
+                                                <span className="text-slate-400">)</span>
+                                              </span>
                                             )}
                                           </div>
+                                          <button type="button"
+                                            onClick={() => removeOptionFromGroup(partIdx, optIdx)}
+                                            className="text-slate-300 hover:text-red-500 shrink-0"
+                                            title="Remove Option">
+                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                          </button>
                                         </div>
                                       </div>
-                                    </div>
+                                    ))}
                                   </div>
-                                )
-                              })}
-                              <button type="button"
-                                onClick={() => addOption(partIdx)}
-                                className="mt-2 text-xs font-medium text-amber-700 hover:underline">
-                                + Add another Option (OR alternative)
-                              </button>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                        {isAnd && (
-                          <button type="button"
-                            onClick={addPart}
-                            className="w-full text-sm font-medium px-3 py-2 rounded-lg border border-dashed border-blue-300 text-blue-600 hover:bg-blue-50">
-                            + Add another Group (AND outer)
-                          </button>
-                        )}
+                          ))}
+                          {isAnd && (
+                            <button type="button"
+                              onClick={startNewGroup}
+                              className="w-full text-xs font-medium px-3 py-2 rounded-lg border border-dashed border-blue-300 text-blue-600 hover:bg-blue-50">
+                              + Start new Group (AND outer)
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
-                  {/* Expression — auto-built from structure unless overridden. */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Expression <span className="text-slate-400 font-normal">(optional)</span>
-                    </label>
-                    <input type="text"
-                      placeholder={buildExpression(
-                        relationForm.relation_type, relationForm.parts, tlId,
-                      ) || '— auto-generated from structure —'}
-                      value={relationForm.expression}
-                      onChange={e => setRelationForm(f => ({ ...f, expression: e.target.value }))}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Human-readable label for the Relation. Auto-built from the structure if blank.
-                    </p>
-                  </div>
-
-                  {relationError && <p className="text-sm text-red-600">{relationError}</p>}
-
-                  <div className="flex gap-3 pt-2">
-                    <button type="button"
-                      onClick={() => { setShowAddRelation(null); setRelationError('') }}
-                      className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
-                      Cancel
-                    </button>
-                    <button type="submit"
-                      disabled={savingRelation || total < 2}
-                      className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
-                      {savingRelation ? 'Saving…' : 'Save Relation'}
-                    </button>
+                  {/* Expression override + footer */}
+                  <div className="px-6 pb-5 space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        Expression label <span className="text-slate-400 font-normal">(optional override)</span>
+                      </label>
+                      <input type="text"
+                        placeholder={liveExpression || '— auto-generated from List —'}
+                        value={relationForm.expression}
+                        onChange={e => setRelationForm(f => ({ ...f, expression: e.target.value }))}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    {relationError && <p className="text-sm text-red-600">{relationError}</p>}
+                    <div className="flex gap-3 pt-2">
+                      <button type="button"
+                        onClick={() => { setShowAddRelation(null); setRelationError('') }}
+                        className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
+                        Cancel
+                      </button>
+                      <button type="submit"
+                        disabled={savingRelation || total < 2}
+                        className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
+                        {savingRelation ? 'Saving…' : 'Save Relation'}
+                      </button>
+                    </div>
                   </div>
                 </form>
               </div>
