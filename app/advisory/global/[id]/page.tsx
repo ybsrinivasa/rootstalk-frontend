@@ -798,46 +798,27 @@ export default function GlobalPackageDetailPage() {
     return null
   }
 
-  // Batch 39C-checks3 — extra gate that ONLY fires at ADD TO LIST. A
-  // list item must be a clean pure-AND or pure-OR sub-expression that
-  // doesn't produce a "double bracket" Part on its own.
-  //   - Pure-OR chain may contain at most ONE AND-list ref (i.e. the
-  //     single compound Option allowed per Part). Two AND-list refs
-  //     OR'd together would resolve to a Part with two compound
-  //     Options — exactly the spec's forbidden "(A+B) or (C+D)" shape.
-  //   - Pure-AND chain cannot reference an OR-list (the resolved
-  //     structure would be multi-Part AND, which can't ride inside a
-  //     single list item that's labelled pure-AND).
-  // SAVE is free of this check — the user wants SAVE to still attempt;
-  // the backend's _check_double_brackets is the final word there.
+  // Batch 39C-checks4 (2026-05-15) — list items must be built from raw
+  // practices only. Referencing an existing List item inside a chain
+  // that's being Added-To-List would effectively duplicate that List
+  // item nested inside the new one — the "(A+B) cannot be added to
+  // list once again" rule per user 2026-05-15.
+  //
+  // SAVE is free of this check — compose List items together at SAVE
+  // time; the backend's _check_double_brackets is the final word for
+  // the saved Relation.
+  //
+  // Individual practices may still be reused freely across List items
+  // (A in L1=A+B and again in L2=A or C is fine — the rule is about
+  // List-item references, not practice references).
   function addToListShapeFailure(): string | null {
-    if (chainIsPureOR()) {
-      let compoundFromAndLists = 0
-      let andListIds: string[] = []
-      for (const slot of chainSlots) {
-        if (!slot.startsWith('list:')) continue
-        const item = listItems.find(i => i.id === slot.slice(5))
-        if (!item) continue
-        const kind = item.ops.every(o => o === 'AND') ? 'AND' : 'OR'
-        if (kind === 'AND') {
-          compoundFromAndLists++
-          andListIds.push(item.id)
-        }
-      }
-      if (compoundFromAndLists > 1) {
-        return `Double-bracket: a List item can hold at most one AND-group inside an OR chain (got ${andListIds.join(', ')}). SAVE may still attempt this shape; the backend will rule.`
-      }
+    const refs: string[] = []
+    for (const slot of chainSlots) {
+      if (slot.startsWith('list:')) refs.push(slot.slice(5))
     }
-    if (chainIsPureAND()) {
-      for (const slot of chainSlots) {
-        if (!slot.startsWith('list:')) continue
-        const item = listItems.find(i => i.id === slot.slice(5))
-        if (!item) continue
-        const kind = item.ops.every(o => o === 'AND') ? 'AND' : 'OR'
-        if (kind === 'OR') {
-          return `AND chain references ${item.id} (an OR-group) — that would need a multi-Part list item, which isn't representable. Try SAVE directly.`
-        }
-      }
+    if (refs.length > 0) {
+      const list = refs.join(', ')
+      return `A List item must be built from practices only. The chain already references ${list} from the List — compose List items together at SAVE time, not inside another List item.`
     }
     return null
   }
