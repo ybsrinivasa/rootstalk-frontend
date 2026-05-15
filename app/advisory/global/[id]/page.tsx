@@ -38,6 +38,21 @@ interface RelationOut {
   parts: string[][][]  // parts[part][option][position] = practice_id
   conditional: { question_id: string; question_text: string | null; answer: 'YES' | 'NO' | 'BOTH' } | null
 }
+// Batch 39E (2026-05-15) — IF Conditional Question. The CQ list
+// endpoint bundles each side's attachment so the UI can render the
+// CQ card directly from one fetch.
+interface CQAttachment {
+  kind: 'practice' | 'relation'
+  id: string
+}
+interface CQOut {
+  id: string
+  timeline_id: string
+  question_text: string
+  display_order: number
+  yes: CQAttachment | null
+  no: CQAttachment | null
+}
 interface PushStatusRow {
   client_id: string
   client_name: string
@@ -195,6 +210,16 @@ export default function GlobalPackageDetailPage() {
   // Batch 39B (2026-05-15): Relations on each Timeline. AND/OR simple
   // shapes only in this sub-batch; mixed AND-OR + IF land in 39C/39D.
   const [relationsByTimeline, setRelationsByTimeline] = useState<Record<string, RelationOut[]>>({})
+  // Batch 39E — Conditional Questions per timeline + Add CQ modal.
+  const [cqsByTimeline, setCqsByTimeline] = useState<Record<string, CQOut[]>>({})
+  const [showAddCQ, setShowAddCQ] = useState<string | null>(null)
+  const [cqForm, setCqForm] = useState<{
+    question_text: string
+    yes_attachment: string  // "practice:id" | "relation:id" | ""
+    no_attachment: string
+  }>({ question_text: '', yes_attachment: '', no_attachment: '' })
+  const [savingCQ, setSavingCQ] = useState(false)
+  const [cqError, setCqError] = useState('')
   const [showAddRelation, setShowAddRelation] = useState<string | null>(null)
   // Batch 39C-rev2 (2026-05-15) — linear chain builder. The SE picks
   // one practice (or a previously Add-to-List item) per slot, joined
@@ -689,11 +714,89 @@ export default function GlobalPackageDetailPage() {
       .then(r => setRelationsByTimeline(m => ({ ...m, [tlId]: r.data })))
       .catch(() => setRelationsByTimeline(m => ({ ...m, [tlId]: [] })))
 
+  // Batch 39E: Conditional Questions on each Timeline. Loaded lazily.
+  const loadConditionalQuestions = (tlId: string) =>
+    api.get<CQOut[]>(`/advisory/global/packages/${id}/timelines/${tlId}/conditional-questions`)
+      .then(r => setCqsByTimeline(m => ({ ...m, [tlId]: r.data })))
+      .catch(() => setCqsByTimeline(m => ({ ...m, [tlId]: [] })))
+
   const toggle = (tlId: string) => {
     if (expanded === tlId) { setExpanded(null); return }
     setExpanded(tlId)
     if (!practiceMap[tlId]) loadPractices(tlId)
     if (!relationsByTimeline[tlId]) loadRelations(tlId)
+    if (!cqsByTimeline[tlId]) loadConditionalQuestions(tlId)
+  }
+
+  function openAddCQ(tlId: string) {
+    setShowAddCQ(tlId)
+    setCqForm({ question_text: '', yes_attachment: '', no_attachment: '' })
+    setCqError('')
+  }
+
+  // Practices and Relations already bound to ANY CQ on this Timeline
+  // — disabled in both pickers so the same entity can't ride two
+  // conditionals. Mirrors the backend's `assert_*_can_be_linked` rules.
+  function attachmentsAlreadyBoundOnTimeline(tlId: string): Set<string> {
+    const out = new Set<string>()
+    for (const cq of (cqsByTimeline[tlId] || [])) {
+      for (const side of [cq.yes, cq.no]) {
+        if (side) out.add(`${side.kind}:${side.id}`)
+      }
+    }
+    return out
+  }
+
+  async function handleSaveCQ(e: FormEvent) {
+    e.preventDefault()
+    if (!showAddCQ) return
+    const tlId = showAddCQ
+    if (!cqForm.question_text.trim()) {
+      setCqError('Question text is required.')
+      return
+    }
+    if (!cqForm.yes_attachment && !cqForm.no_attachment) {
+      setCqError('Attach at least one Practice or Relation to YES or NO.')
+      return
+    }
+    setSavingCQ(true); setCqError('')
+    try {
+      const cqResp = await api.post<{ id: string }>(
+        `/advisory/global/packages/${id}/timelines/${tlId}/conditional-questions`,
+        { question_text: cqForm.question_text.trim(), display_order: (cqsByTimeline[tlId]?.length || 0) },
+      )
+      const cqId = cqResp.data.id
+      // Bind YES side if set.
+      const bind = async (attachment: string, answer: 'YES' | 'NO') => {
+        if (!attachment) return
+        const [kind, attId] = attachment.split(':')
+        if (kind === 'relation') {
+          await api.post(`/advisory/global/relations/${attId}/conditionals`, {
+            practice_id: 'ignored', question_id: cqId, answer,
+          })
+        } else if (kind === 'practice') {
+          await api.post(`/advisory/global/practices/${attId}/conditionals`, {
+            practice_id: attId, question_id: cqId, answer,
+          })
+        }
+      }
+      await bind(cqForm.yes_attachment, 'YES')
+      await bind(cqForm.no_attachment, 'NO')
+      await loadConditionalQuestions(tlId)
+      setShowAddCQ(null)
+    } catch (err: unknown) {
+      setCqError(extractErrorMessage(err, 'Failed to save Conditional Question.'))
+    } finally { setSavingCQ(false) }
+  }
+
+  async function handleDeleteCQ(tlId: string, cqId: string) {
+    if (!confirm('Delete this Conditional Question? The Practices/Relations stay; only the gating goes.')) return
+    try {
+      await api.delete(`/advisory/global/conditional-questions/${cqId}`)
+      await loadConditionalQuestions(tlId)
+    } catch (err: unknown) {
+      alert(extractErrorMessage(err, 'Failed to delete Conditional Question.'))
+    }
   }
 
   function openAddRelation(tlId: string) {
@@ -1941,6 +2044,67 @@ export default function GlobalPackageDetailPage() {
                           </div>
                         )}
                       </div>
+
+                      {/* Batch 39E — Conditional Questions on this Timeline.
+                          Each CQ gates a Practice or Relation on YES / NO
+                          (Paths A + B). */}
+                      <div className="mt-4 pt-3 border-t border-slate-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Conditional Questions</h4>
+                          <button onClick={() => openAddCQ(tl.id)}
+                            className="text-xs font-medium text-blue-600 hover:underline">
+                            + Add Conditional Question
+                          </button>
+                        </div>
+                        {!cqsByTimeline[tl.id] || cqsByTimeline[tl.id].length === 0 ? (
+                          <p className="text-xs text-slate-400 italic">No Conditional Questions on this Timeline yet.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {cqsByTimeline[tl.id].map(cq => {
+                              const practices = practiceMap[tl.id] || []
+                              const relations = relationsByTimeline[tl.id] || []
+                              const labelForAttachment = (att: CQAttachment | null): string => {
+                                if (!att) return '—'
+                                if (att.kind === 'practice') {
+                                  const p = practices.find(x => x.id === att.id)
+                                  return p ? practiceLabel(p) : att.id.slice(0, 8)
+                                }
+                                const r = relations.find(x => x.id === att.id)
+                                return r?.expression || `Relation ${att.id.slice(0, 8)}`
+                              }
+                              return (
+                                <div key={cq.id} className="bg-purple-50/30 border border-purple-100 rounded-lg px-3 py-2">
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-[10px] uppercase tracking-wider text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded font-semibold shrink-0">IF</span>
+                                    <p className="text-xs font-medium text-slate-800 flex-1 min-w-0 break-words">{cq.question_text}</p>
+                                    <button onClick={() => handleDeleteCQ(tl.id, cq.id)}
+                                      className="text-slate-300 hover:text-red-500 shrink-0"
+                                      title="Delete Conditional Question">
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                  <div className="mt-1.5 ml-1 grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                    <div className="flex items-start gap-2 text-[11px]">
+                                      <span className={`shrink-0 px-1.5 py-0.5 rounded font-semibold ${cq.yes ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}`}>YES</span>
+                                      <span className={`min-w-0 break-words ${cq.yes ? 'text-slate-700' : 'text-slate-400 italic'}`}>
+                                        {cq.yes ? `${cq.yes.kind === 'practice' ? 'Practice' : 'Relation'}: ${labelForAttachment(cq.yes)}` : '—'}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-start gap-2 text-[11px]">
+                                      <span className={`shrink-0 px-1.5 py-0.5 rounded font-semibold ${cq.no ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-400'}`}>NO</span>
+                                      <span className={`min-w-0 break-words ${cq.no ? 'text-slate-700' : 'text-slate-400 italic'}`}>
+                                        {cq.no ? `${cq.no.kind === 'practice' ? 'Practice' : 'Relation'}: ${labelForAttachment(cq.no)}` : '—'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -2568,11 +2732,137 @@ export default function GlobalPackageDetailPage() {
           </div>
         )}
 
+        {/* Add Conditional Question Modal — Batch 39E (2026-05-15). The
+            SE drafts a YES/NO question and attaches a Practice or a
+            Relation to either side. Once attached, that entity is
+            gated by the CQ — never fires unless the farmer's answer
+            matches the attached side. */}
+        {showAddCQ && (() => {
+          const tlId = showAddCQ
+          const tl = timelines.find(t => t.id === tlId)
+          const practices = practiceMap[tlId] || []
+          const relations = relationsByTimeline[tlId] || []
+          const alreadyBound = attachmentsAlreadyBoundOnTimeline(tlId)
+          // Practices already in a Relation are handled via their
+          // Relation's binding — we hide them from the per-Practice
+          // dropdown to avoid double-attachment confusion.
+          const pidsInAnyRelation = practiceIdsInAnyRelation(tlId)
+          type Opt = { value: string; label: string; kind: 'practice' | 'relation'; disabled: boolean; reason?: string }
+          const buildOpts = (otherPick: string): Opt[] => {
+            const out: Opt[] = []
+            for (const p of practices) {
+              if (pidsInAnyRelation.has(p.id)) continue
+              const value = `practice:${p.id}`
+              const inOtherCQ = alreadyBound.has(value)
+              const inThisSide = otherPick === value
+              out.push({
+                value, label: practiceLabel(p), kind: 'practice',
+                disabled: inOtherCQ || inThisSide,
+                reason: inOtherCQ ? 'bound to another CQ' : inThisSide ? 'picked on the other side' : undefined,
+              })
+            }
+            for (const r of relations) {
+              const value = `relation:${r.id}`
+              const inOtherCQ = alreadyBound.has(value)
+              const inThisSide = otherPick === value
+              out.push({
+                value, label: r.expression || `Relation ${r.id.slice(0, 8)}`, kind: 'relation',
+                disabled: inOtherCQ || inThisSide,
+                reason: inOtherCQ ? 'bound to another CQ' : inThisSide ? 'picked on the other side' : undefined,
+              })
+            }
+            return out
+          }
+          const yesOpts = buildOpts(cqForm.no_attachment)
+          const noOpts  = buildOpts(cqForm.yes_attachment)
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+                <div className="p-6 border-b border-slate-100">
+                  <h2 className="font-bold text-slate-900">Add Conditional Question</h2>
+                  {tl && (
+                    <p className="text-xs text-slate-500 mt-1">
+                      Timeline: <span className="font-medium text-slate-700">{tl.name}</span>
+                    </p>
+                  )}
+                  <p className="text-xs text-slate-500 mt-2">
+                    The farmer answers YES or NO. Attach a Practice or Relation to either side —
+                    the attached entity only fires when the farmer's answer matches.
+                  </p>
+                </div>
+                <form onSubmit={handleSaveCQ} className="overflow-y-auto p-6 space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Question</label>
+                    <textarea
+                      value={cqForm.question_text}
+                      onChange={e => setCqForm(f => ({ ...f, question_text: e.target.value }))}
+                      rows={2}
+                      placeholder="e.g. Has it rained in the last 2 days?"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {(['yes', 'no'] as const).map(side => {
+                      const opts = side === 'yes' ? yesOpts : noOpts
+                      const value = side === 'yes' ? cqForm.yes_attachment : cqForm.no_attachment
+                      const setValue = (v: string) => setCqForm(f => side === 'yes'
+                        ? { ...f, yes_attachment: v } : { ...f, no_attachment: v })
+                      const colour = side === 'yes' ? 'emerald' : 'rose'
+                      return (
+                        <div key={side}>
+                          <label className={`inline-block text-[10px] uppercase tracking-wider font-semibold rounded px-2 py-0.5 mb-2 ${
+                            side === 'yes' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {side.toUpperCase()} — when farmer answers {side.toUpperCase()}
+                          </label>
+                          <select value={value}
+                            onChange={e => setValue(e.target.value)}
+                            className={`w-full border border-${colour}-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-${colour}-500`}>
+                            <option value="">— nothing attached —</option>
+                            {opts.length === 0 ? (
+                              <option disabled>No eligible Practice or Relation yet</option>
+                            ) : opts.map(o => (
+                              <option key={o.value} value={o.value} disabled={o.disabled}>
+                                {o.kind === 'practice' ? 'Practice: ' : 'Relation: '}
+                                {o.label}
+                                {o.reason ? ` — ${o.reason}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-[11px] text-slate-400 mt-1">
+                            Pick a Practice (Path B) or a Relation (Path A). Empty side = nothing fires
+                            when the answer is {side.toUpperCase()}.
+                          </p>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {cqError && <p className="text-sm text-red-600">{cqError}</p>}
+
+                  <div className="flex gap-3 pt-2">
+                    <button type="button"
+                      onClick={() => { setShowAddCQ(null); setCqError('') }}
+                      className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
+                      Cancel
+                    </button>
+                    <button type="submit"
+                      disabled={savingCQ || !cqForm.question_text.trim() ||
+                                (!cqForm.yes_attachment && !cqForm.no_attachment)}
+                      className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
+                      {savingCQ ? 'Saving…' : 'Save Conditional Question'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )
+        })()}
+
         {/* Add Relation Modal — Batch 39C-rev2 (2026-05-15). Linear
             chain builder: dropdown slots joined by AND / OR ops; ADD TO
             LIST stores a sub-expression for reuse, SAVE composes the
-            current chain and POSTs. IF + Conditional Question land in
-            39D — same modal will pick up a third type. */}
+            current chain and POSTs. */}
         {showAddRelation && (() => {
           const tlId = showAddRelation
           const tl = timelines.find(t => t.id === tlId)
