@@ -213,6 +213,9 @@ export default function GlobalPackageDetailPage() {
   // Batch 39E — Conditional Questions per timeline + Add CQ modal.
   const [cqsByTimeline, setCqsByTimeline] = useState<Record<string, CQOut[]>>({})
   const [showAddCQ, setShowAddCQ] = useState<string | null>(null)
+  // Batch 39G — when set, the Add CQ modal opens in edit mode for the
+  // identified CQ; submit hits PUT instead of POST. Null = create mode.
+  const [editingCQ, setEditingCQ] = useState<{ timelineId: string; cqId: string } | null>(null)
   const [cqForm, setCqForm] = useState<{
     question_text: string
     yes_attachment: string  // "practice:id" | "relation:id" | ""
@@ -730,16 +733,35 @@ export default function GlobalPackageDetailPage() {
 
   function openAddCQ(tlId: string) {
     setShowAddCQ(tlId)
+    setEditingCQ(null)
     setCqForm({ question_text: '', yes_attachment: '', no_attachment: '' })
+    setCqError('')
+  }
+
+  // Batch 39G — open the same modal in edit mode pre-filled from the
+  // existing CQ row.
+  function openEditCQ(tlId: string, cq: CQOut) {
+    setShowAddCQ(tlId)
+    setEditingCQ({ timelineId: tlId, cqId: cq.id })
+    setCqForm({
+      question_text: cq.question_text,
+      yes_attachment: cq.yes ? `${cq.yes.kind}:${cq.yes.id}` : '',
+      no_attachment:  cq.no  ? `${cq.no.kind}:${cq.no.id}`   : '',
+    })
     setCqError('')
   }
 
   // Practices and Relations already bound to ANY CQ on this Timeline
   // — disabled in both pickers so the same entity can't ride two
   // conditionals. Mirrors the backend's `assert_*_can_be_linked` rules.
-  function attachmentsAlreadyBoundOnTimeline(tlId: string): Set<string> {
+  // Batch 39G — when editing an existing CQ, this CQ's own bindings are
+  // excluded so the SE can rebind to the same entity.
+  function attachmentsAlreadyBoundOnTimeline(
+    tlId: string, excludeCqId?: string,
+  ): Set<string> {
     const out = new Set<string>()
     for (const cq of (cqsByTimeline[tlId] || [])) {
+      if (excludeCqId && cq.id === excludeCqId) continue
       for (const side of [cq.yes, cq.no]) {
         if (side) out.add(`${side.kind}:${side.id}`)
       }
@@ -761,29 +783,49 @@ export default function GlobalPackageDetailPage() {
     }
     setSavingCQ(true); setCqError('')
     try {
-      const cqResp = await api.post<{ id: string }>(
-        `/advisory/global/packages/${id}/timelines/${tlId}/conditional-questions`,
-        { question_text: cqForm.question_text.trim(), display_order: (cqsByTimeline[tlId]?.length || 0) },
-      )
-      const cqId = cqResp.data.id
-      // Bind YES side if set.
-      const bind = async (attachment: string, answer: 'YES' | 'NO') => {
-        if (!attachment) return
-        const [kind, attId] = attachment.split(':')
-        if (kind === 'relation') {
-          await api.post(`/advisory/global/relations/${attId}/conditionals`, {
-            practice_id: 'ignored', question_id: cqId, answer,
-          })
-        } else if (kind === 'practice') {
-          await api.post(`/advisory/global/practices/${attId}/conditionals`, {
-            practice_id: attId, question_id: cqId, answer,
-          })
-        }
+      // Helper: split "kind:id" into a structured attachment, or null.
+      const toAttachment = (s: string): { kind: string; id: string } | null => {
+        if (!s) return null
+        const [kind, attId] = s.split(':')
+        return { kind, id: attId }
       }
-      await bind(cqForm.yes_attachment, 'YES')
-      await bind(cqForm.no_attachment, 'NO')
+      if (editingCQ) {
+        // Edit mode — atomic PUT replaces everything.
+        await api.put(
+          `/advisory/global/conditional-questions/${editingCQ.cqId}`,
+          {
+            question_text: cqForm.question_text.trim(),
+            yes: toAttachment(cqForm.yes_attachment),
+            no:  toAttachment(cqForm.no_attachment),
+          },
+        )
+      } else {
+        // Create mode — POST the CQ, then bind each side via the
+        // existing link endpoints.
+        const cqResp = await api.post<{ id: string }>(
+          `/advisory/global/packages/${id}/timelines/${tlId}/conditional-questions`,
+          { question_text: cqForm.question_text.trim(), display_order: (cqsByTimeline[tlId]?.length || 0) },
+        )
+        const cqId = cqResp.data.id
+        const bind = async (attachment: string, answer: 'YES' | 'NO') => {
+          if (!attachment) return
+          const [kind, attId] = attachment.split(':')
+          if (kind === 'relation') {
+            await api.post(`/advisory/global/relations/${attId}/conditionals`, {
+              practice_id: 'ignored', question_id: cqId, answer,
+            })
+          } else if (kind === 'practice') {
+            await api.post(`/advisory/global/practices/${attId}/conditionals`, {
+              practice_id: attId, question_id: cqId, answer,
+            })
+          }
+        }
+        await bind(cqForm.yes_attachment, 'YES')
+        await bind(cqForm.no_attachment, 'NO')
+      }
       await loadConditionalQuestions(tlId)
       setShowAddCQ(null)
+      setEditingCQ(null)
     } catch (err: unknown) {
       setCqError(extractErrorMessage(err, 'Failed to save Conditional Question.'))
     } finally { setSavingCQ(false) }
@@ -2077,6 +2119,13 @@ export default function GlobalPackageDetailPage() {
                                   <div className="flex items-start gap-2">
                                     <span className="text-[10px] uppercase tracking-wider text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded font-semibold shrink-0">IF</span>
                                     <p className="text-xs font-medium text-slate-800 flex-1 min-w-0 break-words">{cq.question_text}</p>
+                                    <button onClick={() => openEditCQ(tl.id, cq)}
+                                      className="text-slate-300 hover:text-blue-500 shrink-0"
+                                      title="Edit Conditional Question">
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                      </svg>
+                                    </button>
                                     <button onClick={() => handleDeleteCQ(tl.id, cq.id)}
                                       className="text-slate-300 hover:text-red-500 shrink-0"
                                       title="Delete Conditional Question">
@@ -2754,7 +2803,9 @@ export default function GlobalPackageDetailPage() {
           const tl = timelines.find(t => t.id === tlId)
           const practices = practiceMap[tlId] || []
           const relations = relationsByTimeline[tlId] || []
-          const alreadyBound = attachmentsAlreadyBoundOnTimeline(tlId)
+          const alreadyBound = attachmentsAlreadyBoundOnTimeline(
+            tlId, editingCQ?.cqId,
+          )
           // Practices already in a Relation are handled via their
           // Relation's binding — we hide them from the per-Practice
           // dropdown to avoid double-attachment confusion.
@@ -2791,7 +2842,9 @@ export default function GlobalPackageDetailPage() {
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
               <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
                 <div className="p-6 border-b border-slate-100">
-                  <h2 className="font-bold text-slate-900">Add Conditional Question</h2>
+                  <h2 className="font-bold text-slate-900">
+                    {editingCQ ? 'Edit Conditional Question' : 'Add Conditional Question'}
+                  </h2>
                   {tl && (
                     <p className="text-xs text-slate-500 mt-1">
                       Timeline: <span className="font-medium text-slate-700">{tl.name}</span>
@@ -2854,7 +2907,7 @@ export default function GlobalPackageDetailPage() {
 
                   <div className="flex gap-3 pt-2">
                     <button type="button"
-                      onClick={() => { setShowAddCQ(null); setCqError('') }}
+                      onClick={() => { setShowAddCQ(null); setEditingCQ(null); setCqError('') }}
                       className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
                       Cancel
                     </button>
@@ -2862,7 +2915,9 @@ export default function GlobalPackageDetailPage() {
                       disabled={savingCQ || !cqForm.question_text.trim() ||
                                 (!cqForm.yes_attachment && !cqForm.no_attachment)}
                       className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
-                      {savingCQ ? 'Saving…' : 'Save Conditional Question'}
+                      {savingCQ
+                        ? 'Saving…'
+                        : editingCQ ? 'Save Changes' : 'Save Conditional Question'}
                     </button>
                   </div>
                 </form>
