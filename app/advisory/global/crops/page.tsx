@@ -38,12 +38,18 @@ export default function GlobalCcaCropsPage() {
             Every Cosh-classified crop. Click any crop to see (or start) its Global Packages.
           </p>
         </div>
-        <input
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
-          placeholder="Filter by name…"
-          className="border border-slate-200 rounded-xl px-4 py-2.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link href="/advisory/cosh-quality"
+            className="text-xs font-medium border border-slate-200 hover:border-blue-300 hover:text-blue-700 rounded-xl px-3 py-2 text-slate-600">
+            Cosh Data Quality →
+          </Link>
+          <input
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            placeholder="Filter by name…"
+            className="border border-slate-200 rounded-xl px-4 py-2.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
       </div>
 
       {loading ? (
