@@ -798,12 +798,58 @@ export default function GlobalPackageDetailPage() {
     return null
   }
 
+  // Batch 39C-checks3 — extra gate that ONLY fires at ADD TO LIST. A
+  // list item must be a clean pure-AND or pure-OR sub-expression that
+  // doesn't produce a "double bracket" Part on its own.
+  //   - Pure-OR chain may contain at most ONE AND-list ref (i.e. the
+  //     single compound Option allowed per Part). Two AND-list refs
+  //     OR'd together would resolve to a Part with two compound
+  //     Options — exactly the spec's forbidden "(A+B) or (C+D)" shape.
+  //   - Pure-AND chain cannot reference an OR-list (the resolved
+  //     structure would be multi-Part AND, which can't ride inside a
+  //     single list item that's labelled pure-AND).
+  // SAVE is free of this check — the user wants SAVE to still attempt;
+  // the backend's _check_double_brackets is the final word there.
+  function addToListShapeFailure(): string | null {
+    if (chainIsPureOR()) {
+      let compoundFromAndLists = 0
+      let andListIds: string[] = []
+      for (const slot of chainSlots) {
+        if (!slot.startsWith('list:')) continue
+        const item = listItems.find(i => i.id === slot.slice(5))
+        if (!item) continue
+        const kind = item.ops.every(o => o === 'AND') ? 'AND' : 'OR'
+        if (kind === 'AND') {
+          compoundFromAndLists++
+          andListIds.push(item.id)
+        }
+      }
+      if (compoundFromAndLists > 1) {
+        return `Double-bracket: a List item can hold at most one AND-group inside an OR chain (got ${andListIds.join(', ')}). SAVE may still attempt this shape; the backend will rule.`
+      }
+    }
+    if (chainIsPureAND()) {
+      for (const slot of chainSlots) {
+        if (!slot.startsWith('list:')) continue
+        const item = listItems.find(i => i.id === slot.slice(5))
+        if (!item) continue
+        const kind = item.ops.every(o => o === 'AND') ? 'AND' : 'OR'
+        if (kind === 'OR') {
+          return `AND chain references ${item.id} (an OR-group) — that would need a multi-Part list item, which isn't representable. Try SAVE directly.`
+        }
+      }
+    }
+    return null
+  }
+
   // ADD TO LIST gating: chain must have at least 2 slots AND all ops
-  // identical (pure AND or pure OR) AND pass Gate-1.
+  // identical (pure AND or pure OR) AND pass Gate-1 AND not violate
+  // the double-bracket rule.
   function canAddToList(tlId: string): boolean {
     if (chainSlots.length < 2) return false
     if (!chainIsPure()) return false
     if (gate1Failure(tlId)) return false
+    if (addToListShapeFailure()) return false
     return true
   }
   function addToListBlockedReason(tlId: string): string {
@@ -811,6 +857,8 @@ export default function GlobalPackageDetailPage() {
     if (!chainIsPure()) return 'ADD TO LIST needs a single operator type (all AND or all OR).'
     const f = gate1Failure(tlId)
     if (f) return f
+    const s = addToListShapeFailure()
+    if (s) return s
     return 'Save the current chain as a reusable List item.'
   }
   function canSave(tlId: string): boolean {
