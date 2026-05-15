@@ -842,15 +842,16 @@ export default function GlobalPackageDetailPage() {
     if (s) return s
     return 'Save the current chain as a reusable List item.'
   }
-  function canSave(tlId: string): boolean {
-    if (chainSlots.length < 2) return false
-    if (gate1Failure(tlId)) return false
-    return true
+  // SAVE intentionally trusts the backend for the structural checks
+  // (double-brackets, cross-timeline, combinatorial duplicates). The
+  // only client-side gate is "the chain has at least two slots" — the
+  // SE wants SAVE to attempt and let the backend rule, even on edge
+  // shapes ADD TO LIST refuses.
+  function canSave(_tlId: string): boolean {
+    return chainSlots.length >= 2
   }
-  function saveBlockedReason(tlId: string): string {
+  function saveBlockedReason(_tlId: string): string {
     if (chainSlots.length < 2) return 'A Relation needs at least 2 slots.'
-    const f = gate1Failure(tlId)
-    if (f) return f
     return ''
   }
 
