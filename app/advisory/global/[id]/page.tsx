@@ -28,6 +28,16 @@ interface Practice {
   display_order: number; is_special_input: boolean
   elements?: PracticeElement[]  // Batch 32 — server resolves labels + display values
 }
+// Batch 39A's GET endpoint returns each Relation with its 3-D parts
+// shape reconstructed from each Practice's encoded role string, plus
+// any RelationConditional folded in under `conditional`.
+interface RelationOut {
+  id: string
+  relation_type: 'AND' | 'OR' | 'IF'
+  expression: string | null
+  parts: string[][][]  // parts[part][option][position] = practice_id
+  conditional: { question_id: string; question_text: string | null; answer: 'YES' | 'NO' | 'BOTH' } | null
+}
 interface PushStatusRow {
   client_id: string
   client_name: string
@@ -181,6 +191,18 @@ export default function GlobalPackageDetailPage() {
   const [expandedPractice, setExpandedPractice] = useState<string | null>(null)  // Batch 32
   const [expanded, setExpanded] = useState<string | null>(null)
   const [publishing, setPublishing] = useState(false)
+
+  // Batch 39B (2026-05-15): Relations on each Timeline. AND/OR simple
+  // shapes only in this sub-batch; mixed AND-OR + IF land in 39C/39D.
+  const [relationsByTimeline, setRelationsByTimeline] = useState<Record<string, RelationOut[]>>({})
+  const [showAddRelation, setShowAddRelation] = useState<string | null>(null)
+  const [relationForm, setRelationForm] = useState<{
+    relation_type: 'AND' | 'OR'
+    picked: string[]  // practice_ids, ordered as the SE picked them
+    expression: string
+  }>({ relation_type: 'AND', picked: [], expression: '' })
+  const [savingRelation, setSavingRelation] = useState(false)
+  const [relationError, setRelationError] = useState('')
 
   const [showAddTL, setShowAddTL] = useState(false)
   const [addingTL, setAddingTL] = useState(false)
@@ -636,10 +658,104 @@ export default function GlobalPackageDetailPage() {
     api.get<Practice[]>(`/advisory/global/packages/${id}/timelines/${tlId}/practices`)
       .then(r => setPracticeMap(m => ({ ...m, [tlId]: r.data })))
 
+  // Batch 39B: relations live alongside practices on each Timeline. Both
+  // are loaded lazily on expand.
+  const loadRelations = (tlId: string) =>
+    api.get<RelationOut[]>(`/advisory/global/packages/${id}/timelines/${tlId}/relations`)
+      .then(r => setRelationsByTimeline(m => ({ ...m, [tlId]: r.data })))
+      .catch(() => setRelationsByTimeline(m => ({ ...m, [tlId]: [] })))
+
   const toggle = (tlId: string) => {
     if (expanded === tlId) { setExpanded(null); return }
     setExpanded(tlId)
     if (!practiceMap[tlId]) loadPractices(tlId)
+    if (!relationsByTimeline[tlId]) loadRelations(tlId)
+  }
+
+  function openAddRelation(tlId: string) {
+    setShowAddRelation(tlId)
+    setRelationForm({ relation_type: 'AND', picked: [], expression: '' })
+    setRelationError('')
+  }
+
+  function toggleRelationPick(practiceId: string) {
+    setRelationForm(f => {
+      const i = f.picked.indexOf(practiceId)
+      const next = i >= 0
+        ? [...f.picked.slice(0, i), ...f.picked.slice(i + 1)]
+        : [...f.picked, practiceId]
+      return { ...f, picked: next }
+    })
+  }
+
+  // For an AND relation, pack all picked practices into one Option of N
+  // positions: parts = [[[p1, p2, ..., pN]]]. For pure OR, each pick
+  // becomes its own Option of 1 position: parts = [[[p1], [p2], ...]].
+  // Mixed AND-OR and IF land in 39C / 39D — the Type radio in 39B is
+  // narrowed to AND / OR.
+  function packRelationParts(type: 'AND' | 'OR', picked: string[]): string[][][] {
+    if (type === 'AND') return [[picked]]
+    return [picked.map(p => [p])]
+  }
+
+  function buildRelationExpressionText(
+    type: 'AND' | 'OR', picked: string[], tlId: string,
+  ): string {
+    const labelFor = (pid: string): string => {
+      const p = (practiceMap[tlId] || []).find(x => x.id === pid)
+      if (!p) return pid.slice(0, 8)
+      return [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
+    }
+    return picked.map(labelFor).join(type === 'AND' ? ' AND ' : ' OR ')
+  }
+
+  async function handleSaveRelation(e: FormEvent) {
+    e.preventDefault()
+    if (!showAddRelation) return
+    if (relationForm.picked.length < 2) {
+      setRelationError('Pick at least 2 practices for a Relation.')
+      return
+    }
+    setSavingRelation(true); setRelationError('')
+    const tlId = showAddRelation
+    const expression = relationForm.expression.trim() ||
+      buildRelationExpressionText(relationForm.relation_type, relationForm.picked, tlId)
+    try {
+      await api.post(
+        `/advisory/global/packages/${id}/timelines/${tlId}/relations`,
+        {
+          relation_type: relationForm.relation_type,
+          parts: packRelationParts(relationForm.relation_type, relationForm.picked),
+          expression,
+        },
+      )
+      await loadRelations(tlId)
+      setShowAddRelation(null)
+    } catch (err: unknown) {
+      setRelationError(extractErrorMessage(err, 'Failed to save Relation.'))
+    } finally { setSavingRelation(false) }
+  }
+
+  async function handleDeleteRelation(tlId: string, relId: string) {
+    if (!confirm('Delete this Relation? The practices stay; only the grouping is removed.')) return
+    try {
+      await api.delete(`/advisory/global/relations/${relId}`)
+      await loadRelations(tlId)
+    } catch (err: unknown) {
+      alert(extractErrorMessage(err, 'Failed to delete Relation.'))
+    }
+  }
+
+  // Practices already inside ANY relation on this timeline — disabled in
+  // the picker (backend rejects double-membership anyway).
+  function practiceIdsInAnyRelation(tlId: string): Set<string> {
+    const out = new Set<string>()
+    for (const r of (relationsByTimeline[tlId] || [])) {
+      for (const part of r.parts) for (const opt of part) for (const pid of opt) {
+        out.add(pid)
+      }
+    }
+    return out
   }
 
   async function handlePublish() {
@@ -1308,6 +1424,67 @@ export default function GlobalPackageDetailPage() {
                       <button onClick={() => setShowAddPractice(tl.id)} className="text-xs font-medium text-blue-600 mt-2 hover:underline">
                         + Add Practice
                       </button>
+
+                      {/* Batch 39B — Relations on this Timeline. Pure
+                          AND and pure OR are authorable here; mixed
+                          AND-OR (Batch 39C) and IF (Batch 39D) will
+                          extend the modal. */}
+                      <div className="mt-4 pt-3 border-t border-slate-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Relations</h4>
+                          <button onClick={() => openAddRelation(tl.id)}
+                            className="text-xs font-medium text-blue-600 hover:underline">
+                            + Add Relation
+                          </button>
+                        </div>
+                        {!relationsByTimeline[tl.id] || relationsByTimeline[tl.id].length === 0 ? (
+                          <p className="text-xs text-slate-400 italic">No Relations on this Timeline yet.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {relationsByTimeline[tl.id].map(rel => {
+                              // For 39B simple AND/OR display: pull each practice's L1 › L2
+                              // label out of the timeline's practiceMap.
+                              const labelFor = (pid: string): string => {
+                                const p = (practiceMap[tl.id] || []).find(x => x.id === pid)
+                                if (!p) return pid.slice(0, 8)
+                                return [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
+                              }
+                              // Flatten parts → text per the relation_type. Pure shapes
+                              // (one Part with one Option, or one Part with many 1-position
+                              // Options) read cleanly as "A AND B" / "A OR B". Mixed shapes
+                              // will render via the proper bracketed walker in 39C.
+                              const allPracticeIds: string[] = []
+                              for (const part of rel.parts) {
+                                for (const opt of part) {
+                                  for (const pid of opt) allPracticeIds.push(pid)
+                                }
+                              }
+                              const joiner = rel.relation_type === 'AND' ? ' AND ' : ' OR '
+                              const text = rel.expression || allPracticeIds.map(labelFor).join(joiner)
+                              const typeColour = rel.relation_type === 'AND'
+                                ? 'bg-blue-100 text-blue-700'
+                                : rel.relation_type === 'OR'
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-purple-100 text-purple-700'
+                              return (
+                                <div key={rel.id} className="flex items-start gap-2 text-xs bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+                                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${typeColour} shrink-0`}>
+                                    {rel.relation_type}
+                                  </span>
+                                  <span className="text-slate-700 flex-1 min-w-0 break-words">{text}</span>
+                                  <button onClick={() => handleDeleteRelation(tl.id, rel.id)}
+                                    className="text-slate-300 hover:text-red-500 shrink-0"
+                                    title="Delete Relation">
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1934,6 +2111,139 @@ export default function GlobalPackageDetailPage() {
             </div>
           </div>
         )}
+
+        {/* Add Relation Modal — Batch 39B (2026-05-15). Pure AND / pure OR
+            authoring. Mixed AND-OR + IF land in 39C / 39D and will extend
+            this same modal. */}
+        {showAddRelation && (() => {
+          const tlId = showAddRelation
+          const tl = timelines.find(t => t.id === tlId)
+          const practices = practiceMap[tlId] || []
+          const alreadyIn = practiceIdsInAnyRelation(tlId)
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90vh] flex flex-col">
+                <div className="p-6 border-b border-slate-100">
+                  <h2 className="font-bold text-slate-900">Add Relation</h2>
+                  {tl && (
+                    <p className="text-xs text-slate-500 mt-1">
+                      Timeline: <span className="font-medium text-slate-700">{tl.name}</span>
+                    </p>
+                  )}
+                </div>
+                <form onSubmit={handleSaveRelation} className="p-6 space-y-4 overflow-y-auto">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Type</label>
+                    <div className="flex gap-2">
+                      {(['AND', 'OR'] as const).map(t => (
+                        <label key={t}
+                          className={`flex-1 flex items-center justify-center gap-2 border rounded-xl px-3 py-2 text-sm cursor-pointer ${
+                            relationForm.relation_type === t
+                              ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                              : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                          }`}>
+                          <input type="radio" name="relation_type" value={t}
+                            checked={relationForm.relation_type === t}
+                            onChange={() => setRelationForm(f => ({ ...f, relation_type: t }))}
+                            className="hidden" />
+                          {t}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-2">
+                      {relationForm.relation_type === 'AND'
+                        ? 'All picked practices must be applied together. The dealer fulfils every one.'
+                        : 'The dealer picks one of the listed practices (any single option satisfies the relation).'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Practices ({relationForm.picked.length} picked)
+                    </label>
+                    {practices.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic">
+                        No practices on this Timeline yet — add practices first, then come back.
+                      </p>
+                    ) : (
+                      <div className="space-y-1 max-h-72 overflow-y-auto border border-slate-100 rounded-lg p-2">
+                        {practices.map(p => {
+                          const inOther = alreadyIn.has(p.id)
+                          const order = relationForm.picked.indexOf(p.id)
+                          const isPicked = order >= 0
+                          const label = [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
+                          return (
+                            <label key={p.id}
+                              className={`flex items-center gap-2 text-xs rounded px-2 py-1.5 ${
+                                inOther
+                                  ? 'opacity-50 cursor-not-allowed bg-slate-50'
+                                  : isPicked
+                                    ? 'bg-blue-50 cursor-pointer'
+                                    : 'hover:bg-slate-50 cursor-pointer'
+                              }`}>
+                              <input type="checkbox"
+                                checked={isPicked}
+                                disabled={inOther}
+                                onChange={() => toggleRelationPick(p.id)}
+                                className="w-3.5 h-3.5 rounded" />
+                              <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>
+                                {p.l0_type}
+                              </span>
+                              <span className="flex-1 min-w-0 truncate text-slate-700">{label}</span>
+                              {isPicked && (
+                                <span className="text-[10px] text-blue-600 font-medium shrink-0">
+                                  #{order + 1}
+                                </span>
+                              )}
+                              {inOther && !isPicked && (
+                                <span className="text-[10px] text-slate-400 italic shrink-0">in another</span>
+                              )}
+                            </label>
+                          )
+                        })}
+                      </div>
+                    )}
+                    <p className="text-[11px] text-slate-500 mt-2">
+                      Order matters for AND (positions are ordered). A practice already in
+                      another Relation on this Timeline is shown disabled.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Expression <span className="text-slate-400 font-normal">(optional)</span>
+                    </label>
+                    <input type="text"
+                      placeholder={buildRelationExpressionText(
+                        relationForm.relation_type, relationForm.picked, tlId,
+                      ) || '— auto-generated from picks —'}
+                      value={relationForm.expression}
+                      onChange={e => setRelationForm(f => ({ ...f, expression: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Human-readable label for the Relation. Auto-generated from picks if blank.
+                    </p>
+                  </div>
+
+                  {relationError && <p className="text-sm text-red-600">{relationError}</p>}
+
+                  <div className="flex gap-3 pt-2">
+                    <button type="button"
+                      onClick={() => { setShowAddRelation(null); setRelationError('') }}
+                      className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
+                      Cancel
+                    </button>
+                    <button type="submit"
+                      disabled={savingRelation || relationForm.picked.length < 2}
+                      className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
+                      {savingRelation ? 'Saving…' : 'Save Relation'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Set Signature Modal — Parameters & Variables (Batch 9) */}
         {showSignature && (
