@@ -867,6 +867,43 @@ export default function GlobalPackageDetailPage() {
     if (bn?.display_value) tokens.push(bn.display_value)
     return tokens.length > 0 ? tokens.join(' • ') : p.l0_type
   }
+  // Batch 39H (2026-05-15) — distinguishing label for the practice
+  // row in the Timeline expansion. Each L0 surfaces its most
+  // identity-bearing attribute so two practices of the same L2 look
+  // different at a glance:
+  //   INPUT       → L2 • Common Name • Trade Name (practiceLabel)
+  //   INSTRUCTION → L2 • TITLE
+  //   MEDIA       → L2 • TITLE
+  //   NON_INPUT   → L2 • first non-INSTRUCTIONS element value
+  //                 (with adjacent unit appended when the next
+  //                 element is a *_UNIT field)
+  function practiceShortLabel(p: Practice): string {
+    if (!p.l2_type) return 'No sub-type'
+    const l2Human = humanize(p.l2_type)
+    if (p.l0_type === 'INPUT') return practiceLabel(p)
+    if (p.l0_type === 'INSTRUCTION' || p.l0_type === 'MEDIA') {
+      const title = p.elements?.find(e => e.element_type === 'TITLE')
+      const t = title?.display_value || title?.value
+      return t ? `${l2Human} • ${t}` : l2Human
+    }
+    // NON_INPUT: walk elements in display order; pick the first
+    // non-INSTRUCTIONS field that has a value. If the next element
+    // is its matching *_UNIT, append it for context.
+    const els = p.elements || []
+    for (let i = 0; i < els.length; i++) {
+      const e = els[i]
+      if (e.element_type === 'INSTRUCTIONS') continue
+      const v = e.display_value || e.value
+      if (!v) continue
+      const next = els[i + 1]
+      if (next && next.element_type.endsWith('_UNIT')) {
+        const u = next.display_value || next.value
+        if (u) return `${l2Human} • ${v} ${u}`
+      }
+      return `${l2Human} • ${v}`
+    }
+    return l2Human
+  }
   function slotDisplay(
     slot: string,
     practices: Practice[],
@@ -1954,8 +1991,8 @@ export default function GlobalPackageDetailPage() {
                                   className="flex items-center gap-3 py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded"
                                   onClick={() => setExpandedPractice(isExpanded ? null : p.id)}>
                                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>{p.l0_type}</span>
-                                  <span className="text-sm text-slate-700 flex-1">
-                                    {[p.l1_type, p.l2_type].filter(Boolean).join(' › ') || <span className="text-slate-400 italic">No sub-type</span>}
+                                  <span className="text-sm text-slate-700 flex-1 min-w-0 truncate">
+                                    {p.l2_type ? practiceShortLabel(p) : <span className="text-slate-400 italic">No sub-type</span>}
                                   </span>
                                   {p.is_special_input && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">special</span>}
                                   <span className="text-[11px] text-slate-400">
