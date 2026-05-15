@@ -196,20 +196,20 @@ export default function GlobalPackageDetailPage() {
   // shapes only in this sub-batch; mixed AND-OR + IF land in 39C/39D.
   const [relationsByTimeline, setRelationsByTimeline] = useState<Record<string, RelationOut[]>>({})
   const [showAddRelation, setShowAddRelation] = useState<string | null>(null)
-  // Batch 39C-rev (2026-05-15) — Add-to-List builder. The SE picks
-  // practices in the palette (pick-order tracked for AND positions),
-  // chooses Single vs Compound, clicks Add to List, and watches the
-  // Group(s) build up on the right. Gate-1 echoes the backend rules
-  // client-side so most mistakes get caught before Save.
-  const [relationForm, setRelationForm] = useState<{
-    relation_type: 'AND' | 'OR'
-    parts: string[][][]  // parts[part][option][position] = practice_id
-    expression: string
-  }>({ relation_type: 'AND', parts: [[]], expression: '' })
-  // Pick-order palette: each practice_id is appended on first click,
-  // removed on a second click. AND positions are stored in this order.
-  const [palette, setPalette] = useState<string[]>([])
-  const [selectionMode, setSelectionMode] = useState<'SINGLE' | 'COMPOUND'>('SINGLE')
+  // Batch 39C-rev2 (2026-05-15) — linear chain builder. The SE picks
+  // one practice (or a previously Add-to-List item) per slot, joined
+  // by AND / OR operators picked between slots. The chain reads like
+  // an expression: `A OR B AND C`. ADD TO LIST stores the chain as a
+  // referenceable sub-expression and clears the row; SAVE resolves the
+  // chain (using AND-tighter precedence) into the backend's parts shape.
+  // List items keep the modal session compact while still letting the SE
+  // build complex shapes like `(A+B) or C or D + (P or Q) + (M or N)`.
+  const [chainSlots, setChainSlots] = useState<string[]>([])  // practice_id or "list:Lx"
+  const [chainOps, setChainOps] = useState<('AND' | 'OR')[]>([])
+  const [pickingOp, setPickingOp] = useState(false)  // SE clicked + to extend; show AND/OR buttons
+  interface RelationListItem { id: string; slots: string[]; ops: ('AND' | 'OR')[] }
+  const [listItems, setListItems] = useState<RelationListItem[]>([])
+  const [relationForm, setRelationForm] = useState<{ expression: string }>({ expression: '' })
   const [savingRelation, setSavingRelation] = useState(false)
   const [relationError, setRelationError] = useState('')
 
@@ -683,218 +683,319 @@ export default function GlobalPackageDetailPage() {
 
   function openAddRelation(tlId: string) {
     setShowAddRelation(tlId)
-    // parts: [[]] = one empty Group ready to receive Options. The
-    // builder always operates on the LAST Part as the "current Group".
-    setRelationForm({ relation_type: 'AND', parts: [[]], expression: '' })
-    setPalette([])
-    setSelectionMode('SINGLE')
+    setChainSlots([])
+    setChainOps([])
+    setPickingOp(false)
+    setListItems([])
+    setRelationForm({ expression: '' })
     setRelationError('')
   }
 
-  // ── Batch 39C-rev: Add-to-List builder ─────────────────────────────────────
+  // ── Batch 39C-rev2: linear chain helpers ──────────────────────────────────
 
-  function togglePaletteItem(practiceId: string) {
-    setPalette(prev => {
-      const i = prev.indexOf(practiceId)
-      if (i >= 0) return [...prev.slice(0, i), ...prev.slice(i + 1)]
-      return [...prev, practiceId]
-    })
+  // Practice label preferred for Relations: L2 + Common Name + Trade
+  // Name. Falls back to the L0 token when nothing else is available.
+  function humanize(s: string): string {
+    return s.toLowerCase().split('_').map(w => (w[0]?.toUpperCase() || '') + w.slice(1)).join(' ')
   }
-
-  // Gate-1 client-side echo — same rules as
-  // `validate_gate1_option` in app/services/relations.py. Special
-  // inputs are exempt from duplicate checks server-side too. Returns
-  // null if OK, else a user-facing error message.
-  function gate1Check(
-    newOption: string[],
-    existingOptions: string[][],
-    tlId: string,
-  ): string | null {
-    if (newOption.length === 0) return 'Selection is empty.'
-    const practices = practiceMap[tlId] || []
-    const isSpecial = (pid: string): boolean => {
-      const p = practices.find(x => x.id === pid)
-      return !!p?.is_special_input
+  function practiceLabel(p: Practice): string {
+    const tokens: string[] = []
+    if (p.l2_type) tokens.push(humanize(p.l2_type))
+    const cn = p.elements?.find(e => e.element_type === 'COMMON_NAME')
+    if (cn?.display_value) tokens.push(cn.display_value)
+    const bn = p.elements?.find(e => e.element_type === 'BRAND_NAME')
+    if (bn?.display_value) tokens.push(bn.display_value)
+    return tokens.length > 0 ? tokens.join(' • ') : p.l0_type
+  }
+  function slotDisplay(
+    slot: string,
+    practices: Practice[],
+    items: RelationListItem[],
+  ): string {
+    if (slot.startsWith('list:')) {
+      const id = slot.slice(5)
+      const item = items.find(i => i.id === id)
+      if (!item) return id
+      return `${item.id}: ${renderChainText(item.slots, item.ops, practices, items)}`
     }
-    const nonSpecial = (xs: string[]): string[] => xs.filter(x => !isSpecial(x))
-    // 1) No duplicate inputs within the new Option (after excluding specials).
-    const innerSet = new Set<string>()
-    for (const pid of nonSpecial(newOption)) {
-      if (innerSet.has(pid)) {
-        return 'The new Option has a duplicate practice (special inputs excepted).'
-      }
-      innerSet.add(pid)
-    }
-    // 2) New Option must not duplicate an existing Option's set exactly.
-    const newSet = JSON.stringify(nonSpecial(newOption).slice().sort())
-    for (const o of existingOptions) {
-      if (JSON.stringify(nonSpecial(o).slice().sort()) === newSet) {
-        return 'This exact set of practices is already an Option in the current Group.'
-      }
-    }
-    // 3) Only one compound Option (size > 1) allowed per Group.
-    if (nonSpecial(newOption).length > 1) {
-      for (const o of existingOptions) {
-        if (nonSpecial(o).length > 1) {
-          return 'A Group already contains an AND-group Option; only one compound Option is allowed per Group.'
+    const p = practices.find(x => x.id === slot)
+    if (!p) return slot.slice(0, 8)
+    return practiceLabel(p)
+  }
+  function renderChainText(
+    slots: string[], ops: ('AND' | 'OR')[],
+    practices: Practice[], items: RelationListItem[],
+  ): string {
+    if (slots.length === 0) return ''
+    const parts: string[] = []
+    for (let i = 0; i < slots.length; i++) {
+      if (i > 0) parts.push(ops[i - 1])
+      const slot = slots[i]
+      if (slot.startsWith('list:')) {
+        const id = slot.slice(5)
+        const item = items.find(it => it.id === id)
+        if (item) {
+          parts.push('(' + renderChainText(item.slots, item.ops, practices, items) + ')')
+        } else {
+          parts.push(id)
         }
+      } else {
+        const p = practices.find(x => x.id === slot)
+        parts.push(p ? practiceLabel(p) : slot.slice(0, 8))
       }
     }
-    return null
+    return parts.join(' ')
   }
 
-  function addToList() {
-    if (!showAddRelation) return
-    if (palette.length === 0) {
-      setRelationError('Pick at least one practice before adding to the List.')
-      return
+  // Predicates the UI uses to gate actions.
+  function chainIsPureOR(): boolean {
+    return chainOps.length > 0 && chainOps.every(o => o === 'OR')
+  }
+  function chainIsPureAND(): boolean {
+    return chainOps.length > 0 && chainOps.every(o => o === 'AND')
+  }
+  function chainIsPure(): boolean {
+    return chainIsPureOR() || chainIsPureAND()
+  }
+
+  // ADD TO LIST gating: chain must have at least 2 slots AND all ops
+  // identical (pure AND or pure OR). Per user spec — the moment ops
+  // mix, ADD TO LIST disables and the SE must SAVE.
+  function canAddToList(): boolean {
+    return chainSlots.length >= 2 && chainIsPure()
+  }
+  function canSave(): boolean {
+    return chainSlots.length >= 2
+  }
+
+  // Slot dropdown options: practices not already in any saved Relation
+  // on the timeline, not already used in this chain, AND list items
+  // not already referenced in this chain.
+  function eligibleSlots(
+    tlId: string, excludeIndex?: number,
+  ): Array<{ value: string; label: string; kind: 'PRACTICE' | 'LIST' }> {
+    const practices = practiceMap[tlId] || []
+    const inOther = practiceIdsInAnyRelation(tlId)
+    const usedInChain = new Set(
+      chainSlots.filter((_, i) => excludeIndex === undefined || i !== excludeIndex),
+    )
+    const out: Array<{ value: string; label: string; kind: 'PRACTICE' | 'LIST' }> = []
+    for (const p of practices) {
+      if (inOther.has(p.id)) continue
+      if (usedInChain.has(p.id)) continue
+      out.push({ value: p.id, label: practiceLabel(p), kind: 'PRACTICE' })
     }
-    const tlId = showAddRelation
-    setRelationForm(f => {
-      const parts = f.parts.map(p => p.slice())
-      const cur = parts[parts.length - 1]  // current (last) Group
-      // SINGLE: each picked practice → its own Option (1 position).
-      // COMPOUND: all picked practices → one Option of N positions
-      // (the bracketed AND-group).
-      const newOptions: string[][] = selectionMode === 'COMPOUND'
-        ? [palette.slice()]
-        : palette.map(pid => [pid])
-      // Run Gate-1 against the current Group's existing Options for
-      // each new Option to be added. Reject the whole batch on the
-      // first failure so the SE knows precisely what hit it.
-      const existing = cur.slice()
-      for (const opt of newOptions) {
-        const err = gate1Check(opt, existing, tlId)
-        if (err) { setRelationError(err); return f }
-        existing.push(opt)
-      }
-      parts[parts.length - 1] = existing
-      setRelationError('')
-      return { ...f, parts }
-    })
-    // Successful add → clear palette + reset mode for the next pass.
-    setPalette([])
-    setSelectionMode('SINGLE')
-  }
-
-  function startNewGroup() {
-    setRelationForm(f => {
-      const cur = f.parts[f.parts.length - 1]
-      if (!cur || cur.length === 0) {
-        setRelationError('Add at least one Option to the current Group before starting a new one.')
-        return f
-      }
-      setRelationError('')
-      return { ...f, parts: [...f.parts, []] }
-    })
-  }
-
-  function removeOptionFromGroup(partIdx: number, optIdx: number) {
-    setRelationForm(f => {
-      const parts = f.parts.map((p, pi) => {
-        if (pi !== partIdx) return p
-        return p.filter((_, oi) => oi !== optIdx)
+    for (const item of listItems) {
+      const key = `list:${item.id}`
+      if (usedInChain.has(key)) continue
+      out.push({
+        value: key,
+        kind: 'LIST',
+        label: `${item.id}: ${renderChainText(item.slots, item.ops, practices, listItems)}`,
       })
-      return { ...f, parts }
-    })
-    setRelationError('')
-  }
-
-  function removeGroup(partIdx: number) {
-    setRelationForm(f => {
-      if (f.parts.length <= 1) {
-        // Last Group — clear its Options instead of dropping the
-        // Group itself.
-        return { ...f, parts: [[]] }
-      }
-      const parts = f.parts.filter((_, i) => i !== partIdx)
-      return { ...f, parts }
-    })
-    setRelationError('')
-  }
-
-  // Total practices placed across the whole structure (excluding empty
-  // Groups). Save requires ≥ 2.
-  function totalPickedInForm(): number {
-    let n = 0
-    for (const part of relationForm.parts) {
-      for (const opt of part) n += opt.length
-    }
-    return n
-  }
-
-  // Practices already placed anywhere in the form — disabled in the
-  // palette so the same practice can't be picked twice for this Relation.
-  function practiceIdsInRelationForm(): Set<string> {
-    const out = new Set<string>()
-    for (const part of relationForm.parts) {
-      for (const opt of part) {
-        for (const pid of opt) out.add(pid)
-      }
     }
     return out
   }
 
-  // Pretty label for an AND relation's full structure. Builds the
-  // bracketed expression "(A+B) or (C) or (D) + (P or Q) + ..." that the
-  // backend stores as `expression`. For OR the structure has a single
-  // Part; the joining string between Parts is unused. Compound (size>1)
-  // Options are wrapped in parens; singleton Options stay bare.
-  function buildExpression(type: 'AND' | 'OR', parts: string[][][], tlId: string): string {
-    const labelFor = (pid: string): string => {
-      const p = (practiceMap[tlId] || []).find(x => x.id === pid)
-      if (!p) return pid.slice(0, 8)
-      return [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
+  function pickSlot(idx: number, value: string) {
+    setChainSlots(s => {
+      const next = s.slice()
+      next[idx] = value
+      return next
+    })
+    setRelationError('')
+    setPickingOp(false)
+  }
+  function appendSlotValue(value: string) {
+    setChainSlots(s => [...s, value])
+    setRelationError('')
+    setPickingOp(false)
+  }
+  function appendOp(op: 'AND' | 'OR') {
+    setChainOps(o => [...o, op])
+    setPickingOp(false)
+  }
+  function clearChain() {
+    setChainSlots([])
+    setChainOps([])
+    setPickingOp(false)
+    setRelationError('')
+  }
+  function backOneSlot() {
+    // Remove the last slot and the operator before it (if any).
+    setChainSlots(s => s.slice(0, -1))
+    setChainOps(o => o.slice(0, -1))
+    setPickingOp(false)
+  }
+
+  function addCurrentChainToList() {
+    if (!canAddToList()) {
+      setRelationError('ADD TO LIST needs ≥ 2 slots with a single operator type (all AND or all OR).')
+      return
     }
-    const partTexts: string[] = []
-    for (const part of parts) {
-      const optTexts: string[] = []
-      for (const opt of part) {
-        if (opt.length === 0) continue
-        if (opt.length === 1) optTexts.push(labelFor(opt[0]))
-        else optTexts.push('(' + opt.map(labelFor).join(' + ') + ')')
+    const id = `L${listItems.length + 1}`
+    setListItems(items => [...items, { id, slots: chainSlots.slice(), ops: chainOps.slice() }])
+    clearChain()
+  }
+
+  function deleteListItem(itemId: string) {
+    setListItems(items => items.filter(i => i.id !== itemId))
+    // Drop any chain slot that referenced this item; trim the op behind it.
+    const ref = `list:${itemId}`
+    setChainSlots(slots => {
+      const next = slots.filter(s => s !== ref)
+      return next
+    })
+    setChainOps(ops => {
+      // Recompute ops so they sit between remaining slots — the simplest
+      // safe move is to drop all ops and let the SE re-pick. Rare path.
+      const before = chainSlots.length
+      const dropped = chainSlots.filter(s => s === ref).length
+      if (dropped === 0) return ops
+      return ops.slice(0, Math.max(0, before - dropped - 1))
+    })
+  }
+
+  // ── Save-time resolver: chain + listItems → backend parts shape ────────────
+  //
+  // Resolution rules (all-OR / all-AND chains; for mixed chains we
+  // surface as relation_type=OR with AND-tighter precedence — same
+  // standard precedence used in algebra).
+  //
+  //   Pure OR chain of N slots → relation_type=OR. One Part. Each slot
+  //   contributes its own Option(s); list refs to OR-lists merge in
+  //   flat; list refs to AND-lists contribute as one compound Option.
+  //
+  //   Pure AND chain → relation_type=AND. If no list ref points at an
+  //   OR-list, the whole thing is one Part with one compound Option of
+  //   all positions. If any list ref is an OR-list, each OR-list ref
+  //   becomes its own Part (multi-Part AND); practice slots and any
+  //   AND-list ref positions collapse into one compound Part.
+  //
+  //   Mixed chain → split into AND-segments around OR ops (AND tighter).
+  //   Each AND-segment becomes an Option; segments OR'd as Options in
+  //   one Part. relation_type=OR.
+
+  function resolveListItemKind(item: RelationListItem): 'AND' | 'OR' {
+    if (item.ops.every(o => o === 'AND')) return 'AND'
+    return 'OR'  // by ADD TO LIST gating, only pure chains land in the list
+  }
+
+  function expandSlotForOR(
+    slot: string, items: RelationListItem[],
+  ): { kind: 'options'; options: string[][] } {
+    if (slot.startsWith('list:')) {
+      const item = items.find(i => i.id === slot.slice(5))
+      if (item) {
+        const k = resolveListItemKind(item)
+        if (k === 'AND') return { kind: 'options', options: [item.slots.slice()] }
+        return { kind: 'options', options: item.slots.map(s => [s]) }
       }
-      if (optTexts.length === 0) continue
-      const partText = optTexts.length === 1 ? optTexts[0] : optTexts.join(' or ')
-      partTexts.push(partText)
     }
-    if (partTexts.length === 0) return ''
-    if (type === 'OR') return partTexts.join(' or ')
-    // AND outer joining
-    return partTexts.length === 1 ? partTexts[0] : partTexts.join(' + ')
+    return { kind: 'options', options: [[slot]] }
+  }
+
+  function resolveChain(
+    slots: string[], ops: ('AND' | 'OR')[], items: RelationListItem[],
+  ): { relation_type: 'AND' | 'OR'; parts: string[][][] } {
+    const allOR = ops.length > 0 && ops.every(o => o === 'OR')
+    const allAND = ops.length > 0 && ops.every(o => o === 'AND')
+
+    if (allOR) {
+      const options: string[][] = []
+      for (const slot of slots) {
+        const exp = expandSlotForOR(slot, items)
+        for (const opt of exp.options) options.push(opt)
+      }
+      return { relation_type: 'OR', parts: [options] }
+    }
+
+    if (allAND) {
+      const parts: string[][][] = []
+      let pending: string[] = []
+      for (const slot of slots) {
+        if (slot.startsWith('list:')) {
+          const item = items.find(i => i.id === slot.slice(5))
+          if (item) {
+            if (resolveListItemKind(item) === 'OR') {
+              if (pending.length > 0) {
+                parts.push([pending])
+                pending = []
+              }
+              parts.push(item.slots.map(s => [s]))
+              continue
+            }
+            pending.push(...item.slots)
+            continue
+          }
+        }
+        pending.push(slot)
+      }
+      if (pending.length > 0) parts.push([pending])
+      if (parts.length === 1) return { relation_type: 'AND', parts }
+      return { relation_type: 'AND', parts }
+    }
+
+    // Mixed chain — AND-tighter precedence. Split on OR.
+    const orSegments: string[][] = []  // each is a list of slot values
+    let cur: string[] = [slots[0]]
+    for (let i = 0; i < ops.length; i++) {
+      if (ops[i] === 'AND') cur.push(slots[i + 1])
+      else { orSegments.push(cur); cur = [slots[i + 1]] }
+    }
+    orSegments.push(cur)
+    // Each AND-segment becomes one Option (compound if size > 1).
+    // List refs within an AND-segment are flattened (AND-list positions
+    // appended; OR-list refs in mixed segments aren't supported here —
+    // surface an error if they show up).
+    const options: string[][] = []
+    for (const seg of orSegments) {
+      const positions: string[] = []
+      for (const slot of seg) {
+        if (slot.startsWith('list:')) {
+          const item = items.find(i => i.id === slot.slice(5))
+          if (item) {
+            if (resolveListItemKind(item) === 'OR') {
+              throw new Error(
+                `Mixed chain references list item ${item.id} (OR-group) inside an AND-segment. ` +
+                `Add the OR-group as a separate List item and rebuild — or split into two saves.`,
+              )
+            }
+            positions.push(...item.slots)
+            continue
+          }
+        }
+        positions.push(slot)
+      }
+      options.push(positions)
+    }
+    return { relation_type: 'OR', parts: [options] }
   }
 
   async function handleSaveRelation(e: FormEvent) {
     e.preventDefault()
     if (!showAddRelation) return
-    if (totalPickedInForm() < 2) {
-      setRelationError('Pick at least 2 practices for a Relation.')
-      return
-    }
-    // Drop empty Options before submit (an Option with zero positions
-    // is meaningless and the validator will reject it). Then drop empty
-    // Parts (no surviving Options).
-    const cleanedParts: string[][][] = []
-    for (const part of relationForm.parts) {
-      const cleanedPart = part.filter(opt => opt.length > 0)
-      if (cleanedPart.length > 0) cleanedParts.push(cleanedPart)
-    }
-    if (cleanedParts.length === 0) {
-      setRelationError('At least one Option must have practices.')
+    if (!canSave()) {
+      setRelationError('A Relation needs at least 2 slots.')
       return
     }
     setSavingRelation(true); setRelationError('')
     const tlId = showAddRelation
+    const practices = practiceMap[tlId] || []
+    let resolved: { relation_type: 'AND' | 'OR'; parts: string[][][] }
+    try {
+      resolved = resolveChain(chainSlots, chainOps, listItems)
+    } catch (err) {
+      setRelationError(err instanceof Error ? err.message : 'Failed to resolve chain.')
+      setSavingRelation(false)
+      return
+    }
     const expression = relationForm.expression.trim() ||
-      buildExpression(relationForm.relation_type, cleanedParts, tlId)
+      renderChainText(chainSlots, chainOps, practices, listItems)
     try {
       await api.post(
         `/advisory/global/packages/${id}/timelines/${tlId}/relations`,
-        {
-          relation_type: relationForm.relation_type,
-          parts: cleanedParts,
-          expression,
-        },
+        { relation_type: resolved.relation_type, parts: resolved.parts, expression },
       )
       await loadRelations(tlId)
       setShowAddRelation(null)
@@ -1609,12 +1710,12 @@ export default function GlobalPackageDetailPage() {
                         ) : (
                           <div className="space-y-2">
                             {relationsByTimeline[tl.id].map(rel => {
-                              // Batch 39C: bracketed walker handles mixed AND-OR shapes.
+                              // Batch 39C-rev2: bracketed walker + L2 / Common Name / Trade Name labels.
                               // parts × options × positions → "(A+B) or (C) or (D) + ..."
                               const labelFor = (pid: string): string => {
                                 const p = (practiceMap[tl.id] || []).find(x => x.id === pid)
                                 if (!p) return pid.slice(0, 8)
-                                return [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
+                                return practiceLabel(p)
                               }
                               const renderParts = (): string => {
                                 const partTexts: string[] = []
@@ -2283,32 +2384,30 @@ export default function GlobalPackageDetailPage() {
           </div>
         )}
 
-        {/* Add Relation Modal — Batch 39C-rev (2026-05-15). Add-to-List
-            builder: pick practices in the palette, choose Single vs
-            Compound, click Add to List, the new Option(s) land in the
-            current Group. Gate-1 echoes the backend rules client-side
-            so most mistakes get caught before Save. IF + Conditional
-            Question land in 39D. */}
+        {/* Add Relation Modal — Batch 39C-rev2 (2026-05-15). Linear
+            chain builder: dropdown slots joined by AND / OR ops; ADD TO
+            LIST stores a sub-expression for reuse, SAVE composes the
+            current chain and POSTs. IF + Conditional Question land in
+            39D — same modal will pick up a third type. */}
         {showAddRelation && (() => {
           const tlId = showAddRelation
           const tl = timelines.find(t => t.id === tlId)
           const practices = practiceMap[tlId] || []
-          const alreadyIn = practiceIdsInAnyRelation(tlId)
-          const usedInForm = practiceIdsInRelationForm()
-          const total = totalPickedInForm()
-          const labelFor = (pid: string): string => {
-            const p = practices.find(x => x.id === pid)
-            if (!p) return pid.slice(0, 8)
-            return [p.l1_type, p.l2_type].filter(Boolean).join(' › ') || p.l0_type
-          }
-          const isAnd = relationForm.relation_type === 'AND'
-          const liveExpression = buildExpression(
-            relationForm.relation_type, relationForm.parts, tlId,
-          )
-          const canCompound = palette.length >= 2
+          const liveExpression = renderChainText(chainSlots, chainOps, practices, listItems)
+          // Where the chain is in its state machine:
+          //   atSlotStateNeedFirst → no slots yet; show first slot dropdown
+          //   atSlotStateNeedNext  → op was just picked; show next slot dropdown
+          //   atSlotStateAtSlot    → just picked a slot; show + / ADD / SAVE
+          //   atSlotStateAtOp      → SE clicked + ; show AND / OR buttons
+          const slotsCount = chainSlots.length
+          const opsCount = chainOps.length
+          const atSlotStateNeedFirst = slotsCount === 0
+          const atSlotStateNeedNext = !atSlotStateNeedFirst && opsCount === slotsCount
+          const atSlotStateAtOp = !atSlotStateNeedFirst && !atSlotStateNeedNext && pickingOp
+          const atSlotStateAtSlot = !atSlotStateNeedFirst && !atSlotStateNeedNext && !pickingOp
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
                 <div className="p-6 border-b border-slate-100">
                   <h2 className="font-bold text-slate-900">Add Relation</h2>
                   {tl && (
@@ -2317,252 +2416,193 @@ export default function GlobalPackageDetailPage() {
                     </p>
                   )}
                 </div>
-                <form onSubmit={handleSaveRelation} className="overflow-y-auto">
-                  {/* Outer joining + live expression */}
-                  <div className="px-6 pt-5 pb-3 space-y-3 border-b border-slate-100">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Outer joining</label>
-                      <div className="flex gap-2">
-                        {(['AND', 'OR'] as const).map(t => (
-                          <label key={t}
-                            className={`flex-1 flex items-center justify-center gap-2 border rounded-xl px-3 py-2 text-sm cursor-pointer ${
-                              relationForm.relation_type === t
-                                ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
-                                : 'border-slate-200 text-slate-700 hover:border-slate-300'
-                            }`}>
-                            <input type="radio" name="relation_type" value={t}
-                              checked={relationForm.relation_type === t}
-                              onChange={() => {
-                                if (relationForm.parts.some(p => p.length > 0) &&
-                                    !confirm('Switch outer joining? The current List will be cleared.')) {
-                                  return
-                                }
-                                setRelationForm(f => ({ ...f, relation_type: t, parts: [[]] }))
-                                setPalette([])
-                                setRelationError('')
-                              }}
-                              className="hidden" />
-                            {t}
-                          </label>
-                        ))}
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-2">
-                        {isAnd
-                          ? 'AND — every Group in the List must be satisfied. Use "+ Start new Group" for parallel requirements like "(A or B) + (P or Q)".'
-                          : 'OR — the dealer fulfils any one Option in the single Group.'}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold">Live expression</span>
-                      <div className="mt-1 border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 text-xs font-mono text-slate-700 min-h-[2rem] break-words">
-                        {liveExpression || <span className="text-slate-400 italic font-sans">— pick practices and Add to List —</span>}
-                      </div>
+
+                <form onSubmit={handleSaveRelation} className="overflow-y-auto p-6 space-y-5">
+                  {/* Live expression preview */}
+                  <div>
+                    <span className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold">Building</span>
+                    <div className="mt-1 border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 text-sm text-slate-700 min-h-[2.5rem] break-words">
+                      {liveExpression || <span className="text-slate-400 italic">— pick a practice to start —</span>}
                     </div>
                   </div>
 
-                  {/* Two-pane builder */}
                   {practices.length === 0 ? (
-                    <p className="px-6 py-6 text-xs text-slate-400 italic">
+                    <p className="text-xs text-slate-400 italic">
                       No practices on this Timeline yet — add practices first, then come back.
                     </p>
                   ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 px-6 py-5">
-                      {/* LEFT — Practice palette + selection controls */}
-                      <div>
-                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Practices</h3>
-                        <div className="border border-slate-200 rounded-lg max-h-72 overflow-y-auto">
-                          {practices.map(p => {
-                            const inOther = alreadyIn.has(p.id)
-                            const inForm = usedInForm.has(p.id)
-                            const disabled = inOther || inForm
-                            const order = palette.indexOf(p.id)
-                            const isPicked = order >= 0
-                            return (
-                              <label key={p.id}
-                                className={`flex items-center gap-2 text-xs px-2 py-1.5 border-b border-slate-50 last:border-0 ${
-                                  disabled
-                                    ? 'opacity-50 cursor-not-allowed bg-slate-50'
-                                    : isPicked
-                                      ? 'bg-blue-50 cursor-pointer'
-                                      : 'hover:bg-slate-50 cursor-pointer'
-                                }`}>
-                                <input type="checkbox"
-                                  checked={isPicked}
-                                  disabled={disabled}
-                                  onChange={() => togglePaletteItem(p.id)}
-                                  className="w-3.5 h-3.5 rounded" />
-                                <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>
-                                  {p.l0_type}
-                                </span>
-                                <span className="flex-1 min-w-0 truncate text-slate-700">{labelFor(p.id)}</span>
-                                {p.is_special_input && (
-                                  <span className="text-[10px] text-yellow-700 bg-yellow-50 px-1 py-0.5 rounded shrink-0">special</span>
-                                )}
-                                {isPicked && (
-                                  <span className="text-[10px] text-blue-600 font-medium shrink-0">#{order + 1}</span>
-                                )}
-                                {inOther && !isPicked && (
-                                  <span className="text-[10px] text-slate-400 italic shrink-0">other</span>
-                                )}
-                                {inForm && !inOther && !isPicked && (
-                                  <span className="text-[10px] text-slate-400 italic shrink-0">added</span>
-                                )}
-                              </label>
-                            )
-                          })}
-                        </div>
-
-                        {/* Selection mode + Add to List */}
-                        <div className="mt-3 border border-slate-200 rounded-lg p-3 bg-slate-50/40">
-                          <p className="text-[11px] text-slate-500 mb-2">
-                            <span className="font-medium text-slate-700">{palette.length}</span> picked
-                            {palette.length > 0 && ` (${palette.map(labelFor).join(', ')})`}
-                          </p>
-                          <div className="flex gap-2 mb-2">
-                            {(['SINGLE', 'COMPOUND'] as const).map(m => {
-                              const isDisabled = m === 'COMPOUND' && !canCompound
-                              return (
-                                <button key={m} type="button"
-                                  disabled={isDisabled}
-                                  onClick={() => setSelectionMode(m)}
-                                  className={`flex-1 text-xs px-2 py-1.5 rounded border ${
-                                    selectionMode === m && !isDisabled
-                                      ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
-                                      : 'border-slate-200 text-slate-600 hover:border-slate-300'
-                                  } disabled:opacity-40 disabled:cursor-not-allowed`}>
-                                  {m === 'SINGLE' ? 'Single Option(s)' : 'Compound AND-group'}
-                                </button>
-                              )
-                            })}
+                    <>
+                      {/* Chain editor */}
+                      <div className="space-y-2">
+                        {chainSlots.map((slot, i) => (
+                          <div key={i} className="flex flex-wrap items-center gap-2">
+                            {i > 0 && (
+                              <span className="text-[10px] uppercase tracking-wider text-slate-600 bg-slate-100 px-2 py-0.5 rounded font-semibold">
+                                {chainOps[i - 1]}
+                              </span>
+                            )}
+                            <span className={`inline-flex items-center gap-1.5 text-sm rounded-lg px-3 py-1.5 border ${slot.startsWith('list:') ? 'bg-purple-50 text-purple-800 border-purple-200' : 'bg-blue-50 text-blue-800 border-blue-200'}`}>
+                              <span className="font-medium">Slot {i + 1}:</span>
+                              <span className="font-medium">{slotDisplay(slot, practices, listItems)}</span>
+                            </span>
                           </div>
-                          <p className="text-[11px] text-slate-500 mb-2">
-                            {selectionMode === 'SINGLE'
-                              ? palette.length <= 1
-                                ? 'Adds the picked practice as one Option.'
-                                : `Adds ${palette.length} separate Options to the current Group (OR'd).`
-                              : `Adds one compound Option (${palette.length} positions, AND'd) to the current Group.`}
-                          </p>
-                          <button type="button"
-                            onClick={addToList}
-                            disabled={palette.length === 0}
-                            className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg text-sm disabled:opacity-50">
-                            Add to List
-                          </button>
-                        </div>
+                        ))}
+
+                        {/* Next-slot dropdown (after picking an op) */}
+                        {atSlotStateNeedNext && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-600 bg-slate-100 px-2 py-0.5 rounded font-semibold">
+                              {chainOps[chainOps.length - 1]}
+                            </span>
+                            <select autoFocus
+                              value=""
+                              onChange={e => {
+                                if (e.target.value) appendSlotValue(e.target.value)
+                              }}
+                              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px]">
+                              <option value="">— pick practice or List item —</option>
+                              {eligibleSlots(tlId).map(opt => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.kind === 'LIST' ? '↪ ' : ''}{opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {/* First-slot dropdown */}
+                        {atSlotStateNeedFirst && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm text-slate-600">Pick a practice:</span>
+                            <select autoFocus
+                              value=""
+                              onChange={e => {
+                                if (e.target.value) appendSlotValue(e.target.value)
+                              }}
+                              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[280px]">
+                              <option value="">— pick practice —</option>
+                              {eligibleSlots(tlId).map(opt => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.kind === 'LIST' ? '↪ ' : ''}{opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {/* AT_OP: AND / OR buttons after + */}
+                        {atSlotStateAtOp && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500 mr-1">Next operator:</span>
+                            {(['AND', 'OR'] as const).map(op => (
+                              <button key={op} type="button"
+                                onClick={() => appendOp(op)}
+                                className="text-sm font-semibold px-4 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100">
+                                {op}
+                              </button>
+                            ))}
+                            <button type="button" onClick={() => setPickingOp(false)}
+                              className="text-xs text-slate-400 hover:text-slate-600 ml-2">cancel</button>
+                          </div>
+                        )}
+
+                        {/* AT_SLOT: ADD TO LIST / SAVE / + or AND/OR auto if only one slot so far */}
+                        {atSlotStateAtSlot && slotsCount === 1 && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500 mr-1">Pick operator:</span>
+                            {(['AND', 'OR'] as const).map(op => (
+                              <button key={op} type="button"
+                                onClick={() => appendOp(op)}
+                                className="text-sm font-semibold px-4 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100">
+                                {op}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {atSlotStateAtSlot && slotsCount >= 2 && (
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <button type="button"
+                              onClick={addCurrentChainToList}
+                              disabled={!canAddToList()}
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={canAddToList() ? 'Save the current chain as a reusable List item' : 'ADD TO LIST needs ≥ 2 slots with a single operator type (all AND or all OR).'}>
+                              + Add to List
+                            </button>
+                            <button type="button"
+                              onClick={() => setPickingOp(true)}
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100">
+                              + Extend chain
+                            </button>
+                            <button type="button"
+                              onClick={backOneSlot}
+                              className="text-xs text-slate-500 hover:text-red-500 px-2 py-1.5">
+                              ← Remove last
+                            </button>
+                            <div className="flex-1" />
+                            <span className="text-[11px] text-slate-400">
+                              {chainIsPure()
+                                ? `pure ${chainIsPureAND() ? 'AND' : 'OR'} chain`
+                                : 'mixed AND/OR — only SAVE is allowed'}
+                            </span>
+                          </div>
+                        )}
                       </div>
 
-                      {/* RIGHT — current Group(s) view */}
-                      <div>
-                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">
-                          List <span className="text-slate-400 font-normal">({total} practice{total === 1 ? '' : 's'})</span>
-                        </h3>
-                        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                          {relationForm.parts.map((part, partIdx) => (
-                            <div key={partIdx}>
-                              {partIdx > 0 && isAnd && (
-                                <div className="flex items-center gap-2 my-2">
-                                  <div className="flex-1 border-t border-blue-200" />
-                                  <span className="text-[10px] uppercase tracking-wider text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded">AND</span>
-                                  <div className="flex-1 border-t border-blue-200" />
-                                </div>
-                              )}
-                              <div className="border border-slate-200 rounded-xl p-2.5 bg-slate-50/40">
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold">
-                                    {isAnd ? `Group ${partIdx + 1}` : 'Group'}
-                                  </span>
-                                  <button type="button"
-                                    onClick={() => removeGroup(partIdx)}
-                                    className="text-slate-300 hover:text-red-500"
-                                    title={relationForm.parts.length > 1 ? 'Remove Group' : 'Clear Group'}>
-                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
-                                  </button>
-                                </div>
-                                {part.length === 0 ? (
-                                  <p className="text-[11px] text-slate-400 italic">Empty — pick practices and Add to List.</p>
-                                ) : (
-                                  <div className="space-y-1.5">
-                                    {part.map((opt, optIdx) => (
-                                      <div key={optIdx}>
-                                        {optIdx > 0 && (
-                                          <div className="flex items-center gap-2 my-1">
-                                            <div className="flex-1 border-t border-amber-200" />
-                                            <span className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold bg-amber-50 px-1.5 py-0.5 rounded">OR</span>
-                                            <div className="flex-1 border-t border-amber-200" />
-                                          </div>
-                                        )}
-                                        <div className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 flex items-start gap-2">
-                                          <div className="flex-1 min-w-0">
-                                            {opt.length === 1 ? (
-                                              <span className="text-xs text-slate-700">{labelFor(opt[0])}</span>
-                                            ) : (
-                                              <span className="text-xs text-slate-700">
-                                                <span className="text-slate-400">(</span>
-                                                {opt.map((pid, i) => (
-                                                  <span key={i}>
-                                                    {i > 0 && <span className="text-slate-400"> + </span>}
-                                                    {labelFor(pid)}
-                                                  </span>
-                                                ))}
-                                                <span className="text-slate-400">)</span>
-                                              </span>
-                                            )}
-                                          </div>
-                                          <button type="button"
-                                            onClick={() => removeOptionFromGroup(partIdx, optIdx)}
-                                            className="text-slate-300 hover:text-red-500 shrink-0"
-                                            title="Remove Option">
-                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                            </svg>
-                                          </button>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                      {/* List of stored sub-expressions */}
+                      {listItems.length > 0 && (
+                        <div>
+                          <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">
+                            List <span className="text-slate-400 font-normal">(reusable in slots above)</span>
+                          </h3>
+                          <div className="space-y-1.5">
+                            {listItems.map(item => (
+                              <div key={item.id} className="flex items-start gap-2 text-xs bg-purple-50 border border-purple-100 rounded-lg px-3 py-1.5">
+                                <span className="font-bold text-purple-700 shrink-0">{item.id}:</span>
+                                <span className="text-slate-700 flex-1 min-w-0 break-words">
+                                  {renderChainText(item.slots, item.ops, practices, listItems)}
+                                </span>
+                                <button type="button"
+                                  onClick={() => deleteListItem(item.id)}
+                                  className="text-purple-300 hover:text-red-500 shrink-0"
+                                  title="Delete List item">
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                  </svg>
+                                </button>
                               </div>
-                            </div>
-                          ))}
-                          {isAnd && (
-                            <button type="button"
-                              onClick={startNewGroup}
-                              className="w-full text-xs font-medium px-3 py-2 rounded-lg border border-dashed border-blue-300 text-blue-600 hover:bg-blue-50">
-                              + Start new Group (AND outer)
-                            </button>
-                          )}
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    </div>
+                      )}
+                    </>
                   )}
 
-                  {/* Expression override + footer */}
-                  <div className="px-6 pb-5 space-y-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        Expression label <span className="text-slate-400 font-normal">(optional override)</span>
-                      </label>
-                      <input type="text"
-                        placeholder={liveExpression || '— auto-generated from List —'}
-                        value={relationForm.expression}
-                        onChange={e => setRelationForm(f => ({ ...f, expression: e.target.value }))}
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    {relationError && <p className="text-sm text-red-600">{relationError}</p>}
-                    <div className="flex gap-3 pt-2">
-                      <button type="button"
-                        onClick={() => { setShowAddRelation(null); setRelationError('') }}
-                        className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
-                        Cancel
-                      </button>
-                      <button type="submit"
-                        disabled={savingRelation || total < 2}
-                        className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
-                        {savingRelation ? 'Saving…' : 'Save Relation'}
-                      </button>
-                    </div>
+                  {/* Expression override */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Expression label <span className="text-slate-400 font-normal">(optional override)</span>
+                    </label>
+                    <input type="text"
+                      placeholder={liveExpression || '— auto-built from the chain —'}
+                      value={relationForm.expression}
+                      onChange={e => setRelationForm(f => ({ ...f, expression: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+
+                  {relationError && <p className="text-sm text-red-600">{relationError}</p>}
+
+                  <div className="flex gap-3 pt-2">
+                    <button type="button"
+                      onClick={() => { setShowAddRelation(null); setRelationError('') }}
+                      className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
+                      Cancel
+                    </button>
+                    <button type="submit"
+                      disabled={savingRelation || !canSave()}
+                      className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
+                      {savingRelation ? 'Saving…' : 'SAVE Relation'}
+                    </button>
                   </div>
                 </form>
               </div>
