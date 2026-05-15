@@ -369,13 +369,17 @@ export default function GlobalPackageDetailPage() {
 
   // F + a.i. — fetches with CN and optional TN. Replaces the
   // separate CN-cascade and TN-narrow effects from Batch 20.
+  // Batch 39D — pass `l2` so the backend can apply the per-L2
+  // completeness filter (only TNs satisfying every required Cosh
+  // connect surface).
   useEffect(() => {
     if (l2Spec.length === 0) return
     if (!commonName) return
     const cnEnc = encodeURIComponent(commonName)
     const tnSuffix = brandName ? `&trade_name=${encodeURIComponent(brandName)}` : ''
-    const url_form = `/cosh/options/formulations?common_name=${cnEnc}${tnSuffix}`
-    const url_ai = `/cosh/options/ai-concentrations?common_name=${cnEnc}${tnSuffix}`
+    const l2Suffix = practiceForm.l2_type ? `&l2=${encodeURIComponent(practiceForm.l2_type)}` : ''
+    const url_form = `/cosh/options/formulations?common_name=${cnEnc}${tnSuffix}${l2Suffix}`
+    const url_ai = `/cosh/options/ai-concentrations?common_name=${cnEnc}${tnSuffix}${l2Suffix}`
     const fetched: Record<string, CoshOption[]> = {}
     const pending: Promise<unknown>[] = []
     for (const f of l2Spec) {
@@ -408,7 +412,8 @@ export default function GlobalPackageDetailPage() {
     if (!mfrField) return
     const cnEnc = encodeURIComponent(commonName)
     const tnSuffix = brandName ? `&trade_name=${encodeURIComponent(brandName)}` : ''
-    api.get<CoshOption[]>(`/cosh/options/manufacturers?common_name=${cnEnc}${tnSuffix}`)
+    const l2Suffix = practiceForm.l2_type ? `&l2=${encodeURIComponent(practiceForm.l2_type)}` : ''
+    api.get<CoshOption[]>(`/cosh/options/manufacturers?common_name=${cnEnc}${tnSuffix}${l2Suffix}`)
       .then(r => {
         setOptionsByField(prev => ({ ...prev, [mfrField.name]: r.data }))
         setElementValues(prev => {
@@ -431,7 +436,8 @@ export default function GlobalPackageDetailPage() {
     if (!tnField) return
     const cnEnc = encodeURIComponent(commonName)
     const mfrSuffix = manufacturer ? `&manufacturer=${encodeURIComponent(manufacturer)}` : ''
-    api.get<CoshOption[]>(`/cosh/options/trade-names?common_name=${cnEnc}${mfrSuffix}`)
+    const l2Suffix = practiceForm.l2_type ? `&l2=${encodeURIComponent(practiceForm.l2_type)}` : ''
+    api.get<CoshOption[]>(`/cosh/options/trade-names?common_name=${cnEnc}${mfrSuffix}${l2Suffix}`)
       .then(r => {
         setOptionsByField(prev => ({ ...prev, [tnField.name]: r.data }))
         setElementValues(prev => {
