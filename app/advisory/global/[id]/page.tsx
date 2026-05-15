@@ -466,10 +466,19 @@ export default function GlobalPackageDetailPage() {
     // applies to fields whose options are CN-driven (MFR, TN, F,
     // AI); APPLICATION_METHOD + DOSAGE_UNIT options come from the
     // L2-level fetch and stay valid.
+    // Batch 39C-bugfix1 (2026-05-15): MFR and BRAND_NAME (Trade Name)
+    // are bidirectional peers under COMMON_NAME — picking one filters
+    // the other's options (Batch 24), it does NOT clear the other.
+    // The stale-value auto-clear in the TN / MFR refresh effects
+    // handles the case where a freshly-picked peer narrows the other
+    // out of validity. Previously this map also wiped the peer, which
+    // both lost the SE's pick and (because empty values don't get
+    // submitted) stopped the cleared field from appearing on the
+    // saved Practice in read-only form.
     const cascadeValuesToClear: Record<string, string[]> = {
       COMMON_NAME:      ['MANUFACTURER', 'BRAND_NAME', 'FORMULATION', 'AI_CONCENTRATION', 'APPLICATION_METHOD', 'DOSAGE', 'DOSAGE_UNIT'],
-      MANUFACTURER:     ['BRAND_NAME', 'FORMULATION', 'AI_CONCENTRATION', 'APPLICATION_METHOD', 'DOSAGE', 'DOSAGE_UNIT'],
-      BRAND_NAME:       ['MANUFACTURER', 'FORMULATION', 'AI_CONCENTRATION', 'APPLICATION_METHOD', 'DOSAGE', 'DOSAGE_UNIT'],
+      MANUFACTURER:     ['FORMULATION', 'AI_CONCENTRATION', 'APPLICATION_METHOD', 'DOSAGE', 'DOSAGE_UNIT'],
+      BRAND_NAME:       ['FORMULATION', 'AI_CONCENTRATION', 'APPLICATION_METHOD', 'DOSAGE', 'DOSAGE_UNIT'],
       FORMULATION:      ['AI_CONCENTRATION', 'DOSAGE', 'DOSAGE_UNIT'],
       AI_CONCENTRATION: ['DOSAGE', 'DOSAGE_UNIT'],
     }
