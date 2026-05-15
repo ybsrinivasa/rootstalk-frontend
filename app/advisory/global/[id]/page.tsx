@@ -768,32 +768,113 @@ export default function GlobalPackageDetailPage() {
     return chainSlots.length >= 2
   }
 
+  // Batch 39C-checks (2026-05-15): the backend's relation_validation
+  // module enforces two L0/L1 rules — AND restricted to L0=INPUT, OR
+  // restricted to one L1 group (PESTICIDE or FERTILIZER) with Special
+  // Inputs floating across both. We mirror them at the slot picker so
+  // the SE sees the constraint live instead of catching a 422 on Save.
+  //
+  // chainAnchorL1s: which L1 groups are currently in the chain
+  // (excluding special inputs, which don't anchor anything).
+  function chainAnchorL1s(tlId: string): Set<string> {
+    const practices = practiceMap[tlId] || []
+    const l1s = new Set<string>()
+    const collect = (pid: string) => {
+      const p = practices.find(x => x.id === pid)
+      if (!p || p.is_special_input) return
+      if (p.l0_type === 'INPUT' && p.l1_type) l1s.add(p.l1_type)
+    }
+    for (const slot of chainSlots) {
+      if (slot.startsWith('list:')) {
+        const item = listItems.find(it => it.id === slot.slice(5))
+        if (item) for (const sub of item.slots) {
+          if (!sub.startsWith('list:')) collect(sub)
+        }
+      } else {
+        collect(slot)
+      }
+    }
+    return l1s
+  }
+
+  // Can the SE pick OR as the next op? OR cross-L1 is forbidden, so
+  // once the chain holds practices from both PESTICIDE and FERTILIZER
+  // groups, the OR button is disabled. Empty / pure-special chains
+  // are always free to pick OR.
+  function canPickOR(tlId: string): boolean {
+    const anchors = chainAnchorL1s(tlId)
+    return !(anchors.has('PESTICIDE') && anchors.has('FERTILIZER'))
+  }
+
   // Slot dropdown options: practices not already in any saved Relation
   // on the timeline, not already used in this chain, AND list items
-  // not already referenced in this chain.
-  function eligibleSlots(
-    tlId: string, excludeIndex?: number,
-  ): Array<{ value: string; label: string; kind: 'PRACTICE' | 'LIST' }> {
+  // not already referenced in this chain. Each option is annotated with
+  // `eligible` + a human `reason` so the dropdown can disable rather
+  // than hide — keeps the rule transparent.
+  function slotOptions(
+    tlId: string,
+    isFirstSlot: boolean,
+    nextOp: 'AND' | 'OR' | null,
+  ): Array<{ value: string; label: string; kind: 'PRACTICE' | 'LIST'; eligible: boolean; reason?: string }> {
     const practices = practiceMap[tlId] || []
     const inOther = practiceIdsInAnyRelation(tlId)
-    const usedInChain = new Set(
-      chainSlots.filter((_, i) => excludeIndex === undefined || i !== excludeIndex),
-    )
-    const out: Array<{ value: string; label: string; kind: 'PRACTICE' | 'LIST' }> = []
+    const usedInChain = new Set(chainSlots)
+    const anchors = chainAnchorL1s(tlId)
+
+    // Eligibility for one candidate (practice OR list item).
+    const evaluate = (
+      candidatePractices: Array<{ l0: string; l1: string | null; special: boolean }>,
+    ): { eligible: boolean; reason?: string } => {
+      for (const cp of candidatePractices) {
+        if (cp.l0 !== 'INPUT') {
+          return { eligible: false, reason: 'not L0:INPUT (Relations are input-only)' }
+        }
+      }
+      if (isFirstSlot || nextOp === 'AND') return { eligible: true }
+      if (nextOp === 'OR') {
+        // No anchor yet (chain is empty or only Special Inputs) — any
+        // L1 is still legal under OR. Once an anchor lands, the OR
+        // group restricts to that L1 plus Special Inputs.
+        if (anchors.size === 0) return { eligible: true }
+        for (const cp of candidatePractices) {
+          if (cp.special) continue
+          if (cp.l1 && !anchors.has(cp.l1)) {
+            return {
+              eligible: false,
+              reason: `OR is locked to ${[...anchors].join('/')} group (or Special Inputs)`,
+            }
+          }
+        }
+        return { eligible: true }
+      }
+      return { eligible: true }
+    }
+
+    const out: Array<{ value: string; label: string; kind: 'PRACTICE' | 'LIST'; eligible: boolean; reason?: string }> = []
     for (const p of practices) {
       if (inOther.has(p.id)) continue
       if (usedInChain.has(p.id)) continue
-      out.push({ value: p.id, label: practiceLabel(p), kind: 'PRACTICE' })
+      const { eligible, reason } = evaluate([{ l0: p.l0_type, l1: p.l1_type, special: p.is_special_input }])
+      out.push({ value: p.id, label: practiceLabel(p), kind: 'PRACTICE', eligible, reason })
     }
     for (const item of listItems) {
       const key = `list:${item.id}`
       if (usedInChain.has(key)) continue
+      const subPractices = item.slots
+        .filter(s => !s.startsWith('list:'))
+        .map(s => practices.find(x => x.id === s))
+        .filter((x): x is Practice => !!x)
+        .map(p => ({ l0: p.l0_type, l1: p.l1_type, special: p.is_special_input }))
+      const { eligible, reason } = evaluate(subPractices)
       out.push({
-        value: key,
-        kind: 'LIST',
+        value: key, kind: 'LIST',
         label: `${item.id}: ${renderChainText(item.slots, item.ops, practices, listItems)}`,
+        eligible, reason,
       })
     }
+    // Ineligible items sink to the bottom so the SE's eyes land on
+    // pickable rows first.
+    out.sort((a, b) => Number(b.eligible) - Number(a.eligible))
     return out
   }
 
@@ -2448,77 +2529,105 @@ export default function GlobalPackageDetailPage() {
                           </div>
                         ))}
 
-                        {/* Next-slot dropdown (after picking an op) */}
-                        {atSlotStateNeedNext && (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[10px] uppercase tracking-wider text-slate-600 bg-slate-100 px-2 py-0.5 rounded font-semibold">
-                              {chainOps[chainOps.length - 1]}
-                            </span>
-                            <select autoFocus
-                              value=""
-                              onChange={e => {
-                                if (e.target.value) appendSlotValue(e.target.value)
-                              }}
-                              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px]">
-                              <option value="">— pick practice or List item —</option>
-                              {eligibleSlots(tlId).map(opt => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.kind === 'LIST' ? '↪ ' : ''}{opt.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
+                        {/* Next-slot dropdown (after picking an op).
+                            Filtered per the operator just chosen — OR
+                            locks to the chain's L1 anchor; AND opens up
+                            to every L0=INPUT practice. */}
+                        {atSlotStateNeedNext && (() => {
+                          const lastOp = chainOps[chainOps.length - 1]
+                          const opts = slotOptions(tlId, false, lastOp)
+                          return (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[10px] uppercase tracking-wider text-slate-600 bg-slate-100 px-2 py-0.5 rounded font-semibold">
+                                {lastOp}
+                              </span>
+                              <select autoFocus
+                                value=""
+                                onChange={e => {
+                                  if (e.target.value) appendSlotValue(e.target.value)
+                                }}
+                                className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[260px]">
+                                <option value="">— pick practice or List item —</option>
+                                {opts.map(opt => (
+                                  <option key={opt.value} value={opt.value} disabled={!opt.eligible}>
+                                    {opt.kind === 'LIST' ? '↪ ' : ''}{opt.label}
+                                    {!opt.eligible && opt.reason ? ` — ${opt.reason}` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )
+                        })()}
 
-                        {/* First-slot dropdown */}
-                        {atSlotStateNeedFirst && (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm text-slate-600">Pick a practice:</span>
-                            <select autoFocus
-                              value=""
-                              onChange={e => {
-                                if (e.target.value) appendSlotValue(e.target.value)
-                              }}
-                              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[280px]">
-                              <option value="">— pick practice —</option>
-                              {eligibleSlots(tlId).map(opt => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.kind === 'LIST' ? '↪ ' : ''}{opt.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
+                        {/* First-slot dropdown — L0=INPUT only. */}
+                        {atSlotStateNeedFirst && (() => {
+                          const opts = slotOptions(tlId, true, null)
+                          return (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm text-slate-600">Pick a practice:</span>
+                              <select autoFocus
+                                value=""
+                                onChange={e => {
+                                  if (e.target.value) appendSlotValue(e.target.value)
+                                }}
+                                className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[280px]">
+                                <option value="">— pick practice —</option>
+                                {opts.map(opt => (
+                                  <option key={opt.value} value={opt.value} disabled={!opt.eligible}>
+                                    {opt.kind === 'LIST' ? '↪ ' : ''}{opt.label}
+                                    {!opt.eligible && opt.reason ? ` — ${opt.reason}` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )
+                        })()}
 
                         {/* AT_OP: AND / OR buttons after + */}
-                        {atSlotStateAtOp && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-slate-500 mr-1">Next operator:</span>
-                            {(['AND', 'OR'] as const).map(op => (
-                              <button key={op} type="button"
-                                onClick={() => appendOp(op)}
-                                className="text-sm font-semibold px-4 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100">
-                                {op}
-                              </button>
-                            ))}
-                            <button type="button" onClick={() => setPickingOp(false)}
-                              className="text-xs text-slate-400 hover:text-slate-600 ml-2">cancel</button>
-                          </div>
-                        )}
+                        {atSlotStateAtOp && (() => {
+                          const orAllowed = canPickOR(tlId)
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500 mr-1">Next operator:</span>
+                              {(['AND', 'OR'] as const).map(op => {
+                                const disabled = op === 'OR' && !orAllowed
+                                return (
+                                  <button key={op} type="button"
+                                    disabled={disabled}
+                                    onClick={() => appendOp(op)}
+                                    title={disabled ? 'OR not available — chain spans both Pesticides and Fertilizers.' : ''}
+                                    className="text-sm font-semibold px-4 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                                    {op}
+                                  </button>
+                                )
+                              })}
+                              <button type="button" onClick={() => setPickingOp(false)}
+                                className="text-xs text-slate-400 hover:text-slate-600 ml-2">cancel</button>
+                            </div>
+                          )
+                        })()}
 
-                        {/* AT_SLOT: ADD TO LIST / SAVE / + or AND/OR auto if only one slot so far */}
-                        {atSlotStateAtSlot && slotsCount === 1 && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-slate-500 mr-1">Pick operator:</span>
-                            {(['AND', 'OR'] as const).map(op => (
-                              <button key={op} type="button"
-                                onClick={() => appendOp(op)}
-                                className="text-sm font-semibold px-4 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100">
-                                {op}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                        {/* AT_SLOT: AND/OR auto if only one slot so far */}
+                        {atSlotStateAtSlot && slotsCount === 1 && (() => {
+                          const orAllowed = canPickOR(tlId)
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500 mr-1">Pick operator:</span>
+                              {(['AND', 'OR'] as const).map(op => {
+                                const disabled = op === 'OR' && !orAllowed
+                                return (
+                                  <button key={op} type="button"
+                                    disabled={disabled}
+                                    onClick={() => appendOp(op)}
+                                    title={disabled ? 'OR not available — chain spans both Pesticides and Fertilizers.' : ''}
+                                    className="text-sm font-semibold px-4 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                                    {op}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )
+                        })()}
 
                         {atSlotStateAtSlot && slotsCount >= 2 && (
                           <div className="flex flex-wrap items-center gap-2 pt-1">
