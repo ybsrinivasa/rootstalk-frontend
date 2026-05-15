@@ -2190,24 +2190,31 @@ export default function GlobalPackageDetailPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                        From (day) {tlForm.from_type === 'DBS' && <span className="text-xs text-slate-400 font-normal">(larger)</span>}
-                      </label>
-                      <input type="number" value={tlForm.from_value}
-                        onChange={e => setTlForm(f => ({ ...f, from_value: e.target.value }))}
-                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                          From (day) {tlForm.from_type === 'DBS' && <span className="text-xs text-slate-400 font-normal">(larger)</span>}
+                        </label>
+                        <input type="number" value={tlForm.from_value}
+                          onChange={e => setTlForm(f => ({ ...f, from_value: e.target.value }))}
+                          className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                          To (day) {tlForm.from_type === 'DBS' && <span className="text-xs text-slate-400 font-normal">(smaller)</span>}
+                        </label>
+                        <input type="number" value={tlForm.to_value}
+                          onChange={e => setTlForm(f => ({ ...f, to_value: e.target.value }))}
+                          className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                        To (day) {tlForm.from_type === 'DBS' && <span className="text-xs text-slate-400 font-normal">(smaller)</span>}
-                      </label>
-                      <input type="number" value={tlForm.to_value}
-                        onChange={e => setTlForm(f => ({ ...f, to_value: e.target.value }))}
-                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                  </div>
+                    {tlForm.from_type === 'DBS' && (
+                      <p className="text-[11px] text-slate-500">
+                        Use <span className="font-medium">To = 0</span> to close at the sowing moment (continuous with a DAS timeline starting at 0).
+                      </p>
+                    )}
+                  </>
                 )}
                 {tlError && <p className="text-sm text-red-600">{tlError}</p>}
                 <div className="flex gap-3 pt-2">
@@ -2588,6 +2595,11 @@ export default function GlobalPackageDetailPage() {
                         required
                         className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
+                    {showEditTL.from_type === 'DBS' && (
+                      <p className="col-span-2 text-[11px] text-slate-500 -mt-1">
+                        Use <span className="font-medium">To = 0</span> to close at the sowing moment (continuous with a DAS timeline starting at 0).
+                      </p>
+                    )}
                   </div>
                 )}
 
