@@ -2809,10 +2809,14 @@ export default function GlobalPackageDetailPage() {
                       <span className="text-xs text-slate-400 font-normal ml-2">(locked at 365 for Perennial)</span>
                     )}
                   </label>
-                  <input type="number" min="1" value={editForm.duration_days}
+                  <input type="number" min="1" max="365"
+                    value={editForm.duration_days}
                     disabled={pkg.package_type === 'PERENNIAL'}
                     onChange={e => setEditForm(f => ({ ...f, duration_days: e.target.value }))}
                     className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" />
+                  {pkg.package_type === 'ANNUAL' && (
+                    <p className="text-[11px] text-slate-400 mt-1">1 – 365 days.</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Description</label>

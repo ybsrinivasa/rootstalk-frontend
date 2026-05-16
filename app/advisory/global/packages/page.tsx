@@ -259,17 +259,41 @@ function GlobalPackagesContent() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Type</label>
-                  <select value={form.package_type} onChange={e => setForm(f => ({ ...f, package_type: e.target.value }))}
+                  <select value={form.package_type}
+                    onChange={e => {
+                      const next = e.target.value as 'ANNUAL' | 'PERENNIAL'
+                      // Batch 39K — Perennial is fixed at 365.
+                      // Auto-set duration when the SE switches type so
+                      // the field doesn't lag behind.
+                      setForm(f => ({
+                        ...f,
+                        package_type: next,
+                        duration_days: next === 'PERENNIAL' ? '365' : f.duration_days,
+                      }))
+                    }}
                     className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="ANNUAL">Annual</option>
                     <option value="PERENNIAL">Perennial</option>
                   </select>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Locked once saved.
+                  </p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Duration (days)</label>
-                  <input type="number" min="1" value={form.duration_days}
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                    Duration (days)
+                    {form.package_type === 'PERENNIAL' && (
+                      <span className="text-xs text-slate-400 font-normal ml-2">(fixed at 365 for Perennial)</span>
+                    )}
+                  </label>
+                  <input type="number" min="1" max="365"
+                    value={form.duration_days}
+                    disabled={form.package_type === 'PERENNIAL'}
                     onChange={e => setForm(f => ({ ...f, duration_days: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" />
+                  {form.package_type === 'ANNUAL' && (
+                    <p className="text-[11px] text-slate-400 mt-1">1 – 365 days.</p>
+                  )}
                 </div>
               </div>
               <div>
