@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, FormEvent } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 
@@ -1915,6 +1916,10 @@ export default function GlobalPackageDetailPage() {
                 {publishing ? 'Publishing…' : '✓ Publish'}
               </button>
             )}
+            <Link href={`/advisory/global/${id}/preview`}
+              className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50 text-center">
+              👁 Preview
+            </Link>
             <button
               onClick={openEdit}
               className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50">
