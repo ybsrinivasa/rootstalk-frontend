@@ -182,13 +182,18 @@ const UNIT_TYPE_SLUGS = new Set([
 ])
 
 // `cosh_core:<slug>` and `cosh_cascade:<lookup>` strings the modal
-// can render as dropdowns. Everything else (planting_material,
-// itk_name, maturity_index, …) falls back to free text until Cosh
-// ships those Connects.
+// can render as dropdowns. Anything else falls back to free text.
+//
+// 2026-05-16: planting_material, itk_name, maturity_index Cores
+// shipped — flipped from free text to dropdowns served by the three
+// new flat /cosh/options/* endpoints.
 function isCoshDropdownSource(source: string): boolean {
   if (source === 'cosh_core:common_name') return true
   if (source === 'cosh_core:application_method') return true
   if (source === 'cosh_core:formulation') return true
+  if (source === 'cosh_core:planting_material') return true
+  if (source === 'cosh_core:itk_name') return true
+  if (source === 'cosh_core:maturity_index') return true
   if (source.startsWith('cosh_core:')) {
     return UNIT_TYPE_SLUGS.has(source.slice(10))
   }
@@ -408,6 +413,18 @@ export default function GlobalPackageDetailPage() {
         const slug = f.source.slice(10)
         pending.push(api.get<CoshOption[]>(
           `/cosh/options/units?l2=${encodeURIComponent(l2)}&unit_type=${encodeURIComponent(slug)}`,
+        ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
+      } else if (f.source === 'cosh_core:planting_material') {
+        pending.push(api.get<CoshOption[]>(
+          `/cosh/options/planting-materials`,
+        ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
+      } else if (f.source === 'cosh_core:itk_name') {
+        pending.push(api.get<CoshOption[]>(
+          `/cosh/options/itks`,
+        ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
+      } else if (f.source === 'cosh_core:maturity_index') {
+        pending.push(api.get<CoshOption[]>(
+          `/cosh/options/maturity-indices`,
         ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
       }
     }
