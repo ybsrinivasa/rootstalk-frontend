@@ -10,6 +10,7 @@ interface Package {
   package_type: string; status: string; duration_days: number
   version: number; description: string | null; created_at: string
   start_date_label_cosh_id: string | null
+  published_at: string | null
 }
 interface Timeline {
   id: string; name: string; from_type: string; from_value: number; to_value: number; display_order: number
@@ -208,6 +209,10 @@ export default function GlobalPackageDetailPage() {
   const [expandedPractice, setExpandedPractice] = useState<string | null>(null)  // Batch 32
   const [expanded, setExpanded] = useState<string | null>(null)
   const [publishing, setPublishing] = useState(false)
+  // Batch 39L-a (2026-05-16) — rich publish confirmation modal.
+  const [showPublishModal, setShowPublishModal] = useState(false)
+  const [publishError, setPublishError] = useState('')
+  const [publishBlockers, setPublishBlockers] = useState<{ code: string; message: string }[]>([])
 
   // Batch 39B (2026-05-15): Relations on each Timeline. AND/OR simple
   // shapes only in this sub-batch; mixed AND-OR + IF land in 39C/39D.
@@ -1401,9 +1406,28 @@ export default function GlobalPackageDetailPage() {
 
   async function handlePublish() {
     setPublishing(true)
+    setPublishError('')
     try {
       const { data } = await api.post<Package>(`/advisory/global/packages/${id}/publish`)
       setPkg(data)
+      setShowPublishModal(false)
+    } catch (err: unknown) {
+      // 422 publish_blocked carries a `missing: [...]` list. Surface
+      // every checklist item to the CM in one pass.
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      if (detail && typeof detail === 'object') {
+        const d = detail as { code?: string; message?: string; missing?: { code: string; message: string }[] }
+        if (d.code === 'publish_blocked' && Array.isArray(d.missing)) {
+          setPublishBlockers(d.missing)
+          setPublishError('Publish blocked — see the checklist below.')
+        } else if (d.message) {
+          setPublishError(d.message)
+        } else {
+          setPublishError('Publish failed.')
+        }
+      } else {
+        setPublishError(typeof detail === 'string' ? detail : 'Publish failed.')
+      }
     } finally { setPublishing(false) }
   }
 
@@ -1883,6 +1907,12 @@ export default function GlobalPackageDetailPage() {
               <h1 className="text-2xl font-bold text-slate-900">{pkg.name}</h1>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">GLOBAL TEMPLATE</span>
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLOUR[pkg.status] || 'bg-slate-100 text-slate-600'}`}>{pkg.status}</span>
+              {/* Batch 39L-a — persistent version badge so the CM
+                  never loses track of what they're editing. */}
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-900 text-white"
+                title={pkg.published_at ? `Published ${new Date(pkg.published_at).toLocaleDateString()}` : 'Not yet published'}>
+                v{pkg.version}
+              </span>
             </div>
             <p className="text-slate-500 text-sm mt-1">
               {pkg.package_type} · {pkg.duration_days} days · Crop: <span className="font-mono">{pkg.crop_cosh_id}</span> · v{pkg.version}
@@ -1911,9 +1941,13 @@ export default function GlobalPackageDetailPage() {
           </div>
           <div className="flex flex-col gap-2 shrink-0">
             {pkg.status === 'DRAFT' && (
-              <button onClick={handlePublish} disabled={publishing}
+              <button onClick={() => {
+                setShowPublishModal(true)
+                setPublishError('')
+                setPublishBlockers([])
+              }} disabled={publishing}
                 className="bg-blue-600 text-white text-sm font-semibold px-4 py-2.5 rounded-xl disabled:opacity-50">
-                {publishing ? 'Publishing…' : '✓ Publish'}
+                ✓ Publish…
               </button>
             )}
             <Link href={`/advisory/global/${id}/preview`}
@@ -2221,6 +2255,88 @@ export default function GlobalPackageDetailPage() {
         </div>
 
         {/* Add Timeline Modal */}
+        {/* Publish Modal — Batch 39L-a (2026-05-16). Shows version
+            transition, content summary, and any backend-side
+            blockers. The blocker list comes from the publish 422
+            (publish_blocked) so the CM sees the full checklist in
+            one round-trip. */}
+        {showPublishModal && (() => {
+          const counts = (() => {
+            let tlCount = 0, practiceCount = 0, relCount = 0, cqCount = 0
+            for (const tl of timelines) {
+              if (tl.status === 'INACTIVE') continue
+              tlCount++
+              practiceCount += (practiceMap[tl.id] || []).length
+              relCount += (relationsByTimeline[tl.id] || []).length
+              cqCount += (cqsByTimeline[tl.id] || []).length
+            }
+            return { tlCount, practiceCount, relCount, cqCount }
+          })()
+          const nextVersion = pkg.published_at == null ? pkg.version : pkg.version + 1
+          const isFirstPublish = pkg.published_at == null
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+                <div className="p-6 border-b border-slate-100">
+                  <h2 className="font-bold text-slate-900">Publish Package</h2>
+                  <p className="text-slate-500 text-sm mt-0.5">
+                    Once published, the Package becomes available for CMs to assign to clients.
+                  </p>
+                </div>
+                <div className="p-6 space-y-4 overflow-y-auto">
+                  <div className="bg-slate-50 rounded-xl p-4">
+                    <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Version</p>
+                    <p className="text-sm font-medium text-slate-800 mt-1">
+                      {isFirstPublish ? (
+                        <>First publish — will become <span className="font-bold">v{nextVersion}</span></>
+                      ) : (
+                        <>v{pkg.version} → <span className="font-bold">v{nextVersion}</span></>
+                      )}
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 rounded-xl p-4">
+                    <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Content snapshot</p>
+                    <ul className="text-sm text-slate-700 space-y-1">
+                      <li>{counts.tlCount} active Timeline{counts.tlCount === 1 ? '' : 's'}</li>
+                      <li>{counts.practiceCount} Practice{counts.practiceCount === 1 ? '' : 's'}</li>
+                      <li>{counts.relCount} Relation{counts.relCount === 1 ? '' : 's'}</li>
+                      <li>{counts.cqCount} Conditional Question{counts.cqCount === 1 ? '' : 's'}</li>
+                    </ul>
+                  </div>
+                  {publishBlockers.length > 0 && (
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                      <p className="text-[11px] uppercase tracking-wider text-red-700 font-semibold mb-2">Blocking issues</p>
+                      <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
+                        {publishBlockers.map(b => (
+                          <li key={b.code + b.message}>{b.message}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {publishError && publishBlockers.length === 0 && (
+                    <p className="text-sm text-red-600">{publishError}</p>
+                  )}
+                </div>
+                <div className="px-6 pb-6 flex gap-3">
+                  <button type="button"
+                    onClick={() => {
+                      setShowPublishModal(false); setPublishError(''); setPublishBlockers([])
+                    }}
+                    className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
+                    Cancel
+                  </button>
+                  <button type="button"
+                    onClick={handlePublish}
+                    disabled={publishing}
+                    className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
+                    {publishing ? 'Publishing…' : `Publish v${nextVersion}`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+
         {showAddTL && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
