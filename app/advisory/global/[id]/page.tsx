@@ -1811,17 +1811,13 @@ export default function GlobalPackageDetailPage() {
     } finally { setSavingEdit(false) }
   }
 
-  async function handlePushToClient(clientId: string) {
-    setPushingClientId(clientId)
-    setPushError('')
-    try {
-      await api.post(`/client/${clientId}/packages/${id}/push`)
-      await loadPushStatus()
-    } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string | { code?: string; message?: string } } } })?.response?.data?.detail
-      const msg = typeof detail === 'string' ? detail : detail?.message
-      setPushError(msg || 'Push failed.')
-    } finally { setPushingClientId(null) }
+  // Batch 39N-b (2026-05-16) — push is now an authoring step. The CM
+  // picks a client here, the per-client form (Name / Description /
+  // Start Date Label / Locations / PVs / Authors) lives on its own
+  // page so the 5-section surface gets room to breathe.
+  function handlePushToClient(clientId: string) {
+    setShowPushModal(false)
+    router.push(`/advisory/global/${id}/push/${clientId}`)
   }
 
   // ── Parameters & Variables ─────────────────────────────────────────────────
@@ -3897,9 +3893,8 @@ export default function GlobalPackageDetailPage() {
                     ) : (
                       <button
                         onClick={() => handlePushToClient(row.client_id)}
-                        disabled={pushingClientId === row.client_id}
-                        className="text-sm font-semibold text-white bg-blue-600 px-4 py-1.5 rounded-xl disabled:opacity-50">
-                        {pushingClientId === row.client_id ? 'Pushing…' : 'Push'}
+                        className="text-sm font-semibold text-white bg-blue-600 px-4 py-1.5 rounded-xl">
+                        Push details →
                       </button>
                     )}
                   </div>
