@@ -423,14 +423,24 @@ export default function GlobalPackageDetailPage() {
           `/cosh/options/itks`,
         ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
       } else if (f.source === 'cosh_core:maturity_index') {
-        pending.push(api.get<CoshOption[]>(
-          `/cosh/options/maturity-indices`,
-        ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
+        // Crop-filtered via Cosh's `maturity_index_crops` Connect.
+        // Package's crop_cosh_id is mandatory at create-time, so it's
+        // always present when this effect runs.
+        const crop = pkg?.crop_cosh_id
+        if (crop) {
+          pending.push(api.get<CoshOption[]>(
+            `/cosh/options/maturity-indices?crop=${encodeURIComponent(crop)}`,
+          ).then(r => { fetched[f.name] = r.data }).catch(() => { fetched[f.name] = [] }))
+        } else {
+          fetched[f.name] = []
+        }
       }
     }
     if (pending.length === 0) return
     Promise.all(pending).then(() => setOptionsByField(prev => ({ ...prev, ...fetched })))
-  }, [practiceForm.l2_type, l2Spec])
+    // pkg?.crop_cosh_id needed for the maturity-indices branch — re-fetch
+    // if the package loads after the modal mounts.
+  }, [practiceForm.l2_type, l2Spec, pkg?.crop_cosh_id])
 
   // Cascade plumbing (Batch 24): MANUFACTURER and BRAND_NAME are
   // independent optional peers under COMMON_NAME, each filtering the
