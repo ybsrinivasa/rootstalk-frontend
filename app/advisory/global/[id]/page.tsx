@@ -227,6 +227,10 @@ export default function GlobalPackageDetailPage() {
   const [lineage, setLineage] = useState<LineageRow[]>([])
   const [cloning, setCloning] = useState(false)
   const [cloneError, setCloneError] = useState('')
+  // Batch 39L-c (2026-05-16) — version-history panel. `makingEditable`
+  // holds the lineage row id mid-flight so we can disable just that
+  // row's CTA while the clone-from-historical-row call is in progress.
+  const [makingEditable, setMakingEditable] = useState<string | null>(null)
 
   // Batch 39B (2026-05-15): Relations on each Timeline. AND/OR simple
   // shapes only in this sub-batch; mixed AND-OR + IF land in 39C/39D.
@@ -747,6 +751,33 @@ export default function GlobalPackageDetailPage() {
     } catch (err: unknown) {
       setCloneError(extractErrorMessage(err, 'Failed to start a new draft.'))
     } finally { setCloning(false) }
+  }
+
+  // Batch 39L-c — clone any INACTIVE row in this lineage into a new
+  // DRAFT. Mirrors the spec line: "CM can also pick a previous
+  // (INACTIVE) version and make it editable." Backend endpoint already
+  // accepts ACTIVE or INACTIVE sources and enforces the single-DRAFT
+  // invariant by flipping any existing DRAFT to INACTIVE — we warn the
+  // CM up front if that's about to happen.
+  async function handleMakeEditable(srcId: string, srcVersion: number) {
+    const existing = lineage.find(r => r.status === 'DRAFT')
+    if (existing && existing.id !== srcId) {
+      const ok = confirm(
+        `A v${existing.version} DRAFT already exists in this lineage. ` +
+        `Making v${srcVersion} editable will replace it (the existing ` +
+        `draft becomes INACTIVE). Continue?`
+      )
+      if (!ok) return
+    }
+    setMakingEditable(srcId); setCloneError('')
+    try {
+      const { data } = await api.post<Package>(
+        `/advisory/global/packages/${srcId}/clone-to-draft`
+      )
+      router.push(`/advisory/global/${data.id}`)
+    } catch (err: unknown) {
+      setCloneError(extractErrorMessage(err, 'Failed to make this version editable.'))
+    } finally { setMakingEditable(null) }
   }
 
   const loadPractices = (tlId: string) =>
@@ -1965,6 +1996,50 @@ export default function GlobalPackageDetailPage() {
               )}
             </div>
           </div>
+        )}
+        {/* Version history panel — Batch 39L-c. Surfaces every row in
+            the lineage so the CM can navigate between versions and pull
+            a historical (INACTIVE) version back into a new editable
+            DRAFT without typing URLs. */}
+        {lineage.length > 1 && (
+          <details className="bg-white border border-slate-200 rounded-2xl" open={lineage.length <= 5}>
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 rounded-2xl">
+              Version history ({lineage.length} versions)
+            </summary>
+            <ul className="divide-y divide-slate-100 border-t border-slate-100">
+              {lineage.map(row => (
+                <li key={row.id} className="px-4 py-3 flex items-center gap-3 flex-wrap text-sm">
+                  <span className="font-semibold text-slate-900 min-w-[2.5rem]">v{row.version}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLOUR[row.status] || 'bg-slate-100 text-slate-600'}`}>
+                    {row.status}
+                  </span>
+                  {row.published_at && (
+                    <span className="text-xs text-slate-500">
+                      published {new Date(row.published_at).toLocaleDateString()}
+                    </span>
+                  )}
+                  {row.is_current && (
+                    <span className="text-xs text-slate-500 italic">(viewing)</span>
+                  )}
+                  <div className="ml-auto flex items-center gap-3">
+                    {!row.is_current && (
+                      <Link href={`/advisory/global/${row.id}`}
+                        className="text-xs text-blue-600 hover:underline">
+                        {row.status === 'DRAFT' ? 'Open draft →' : 'View →'}
+                      </Link>
+                    )}
+                    {!row.is_current && row.status === 'INACTIVE' && (
+                      <button onClick={() => handleMakeEditable(row.id, row.version)}
+                        disabled={makingEditable !== null}
+                        className="text-xs font-semibold text-amber-700 hover:underline disabled:opacity-50">
+                        {makingEditable === row.id ? 'Working…' : 'Make editable'}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
         {/* Header */}
         <div className="flex items-start gap-4">
