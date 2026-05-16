@@ -31,6 +31,11 @@ interface ProblemGroup {
   status: string
 }
 
+interface CropItem {
+  cosh_id: string
+  name_en: string
+}
+
 const STATUS_COLOUR: Record<string, string> = {
   DRAFT: 'bg-amber-100 text-amber-700',
   ACTIVE: 'bg-green-100 text-green-700',
@@ -45,6 +50,7 @@ const AREA_PLANT_LABEL: Record<string, string> = {
 export default function GlobalCHAPage() {
   const [recs, setRecs] = useState<PGRec[]>([])
   const [problemGroups, setProblemGroups] = useState<ProblemGroup[]>([])
+  const [cropsByPg, setCropsByPg] = useState<Record<string, CropItem[]>>({})
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -71,6 +77,23 @@ export default function GlobalCHAPage() {
   const pgNameMap = problemGroups.reduce<Record<string, string>>(
     (acc, p) => { acc[p.cosh_id] = p.name_en; return acc }, {},
   )
+
+  // Fetch applicable crops per distinct PG cosh_id surfaced in the
+  // recommendation list. One round-trip per unique PG; result cached
+  // for the lifetime of this page mount. Empty array (rather than
+  // missing key) lets us distinguish "no rows in sp_pg_crops" from
+  // "still loading".
+  useEffect(() => {
+    const distinct = Array.from(new Set(recs.map(r => r.problem_group_cosh_id)))
+    const pending = distinct.filter(id => !(id in cropsByPg))
+    if (pending.length === 0) return
+    pending.forEach(pgId => {
+      api.get<{ items: CropItem[] }>(`/diagnosis/pg-crops?pg=${encodeURIComponent(pgId)}`)
+        .then(r => setCropsByPg(prev => ({ ...prev, [pgId]: r.data.items || [] })))
+        .catch(() => setCropsByPg(prev => ({ ...prev, [pgId]: [] })))
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recs])
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
@@ -130,23 +153,44 @@ export default function GlobalCHAPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {recs.map(r => (
-                <tr key={r.id} className="hover:bg-slate-50">
-                  <td className="px-5 py-3.5">
-                    <Link href={`/cha/global/${r.id}`} className="text-sm font-medium text-slate-800 hover:text-blue-600">
-                      {pgNameMap[r.problem_group_cosh_id] || r.problem_group_cosh_id}
-                    </Link>
-                    <p className="text-[10px] font-mono text-slate-400 mt-0.5">{r.problem_group_cosh_id}</p>
-                  </td>
-                  <td className="px-5 py-3.5 text-slate-600 hidden sm:table-cell text-xs">
-                    {AREA_PLANT_LABEL[r.area_or_plant || ''] || '—'}
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOUR[r.status] || 'bg-slate-100 text-slate-600'}`}>{r.status}</span>
-                  </td>
-                  <td className="px-5 py-3.5 text-right text-slate-400 text-xs">v{r.version}</td>
-                </tr>
-              ))}
+              {recs.map(r => {
+                const crops = cropsByPg[r.problem_group_cosh_id]
+                const cropsLoaded = crops !== undefined
+                const visibleCrops = cropsLoaded ? crops.slice(0, 5) : []
+                const overflowCount = cropsLoaded ? Math.max(0, crops.length - visibleCrops.length) : 0
+                return (
+                  <tr key={r.id} className="hover:bg-slate-50">
+                    <td className="px-5 py-3.5">
+                      <Link href={`/cha/global/${r.id}`} className="text-sm font-medium text-slate-800 hover:text-blue-600">
+                        {pgNameMap[r.problem_group_cosh_id] || r.problem_group_cosh_id}
+                      </Link>
+                      <p className="text-[10px] font-mono text-slate-400 mt-0.5">{r.problem_group_cosh_id}</p>
+                      {cropsLoaded && crops.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1" title={`Applicable crops (from Cosh sp_pg_crops, ${crops.length} total)`}>
+                          {visibleCrops.map(c => (
+                            <span key={c.cosh_id} className="text-[10px] bg-green-50 text-green-700 px-2 py-0.5 rounded-full">
+                              {c.name_en}
+                            </span>
+                          ))}
+                          {overflowCount > 0 && (
+                            <span className="text-[10px] text-slate-500 px-1.5 py-0.5">+{overflowCount} more</span>
+                          )}
+                        </div>
+                      )}
+                      {cropsLoaded && crops.length === 0 && (
+                        <p className="text-[10px] text-slate-300 mt-1.5 italic">No crops linked in sp_pg_crops</p>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5 text-slate-600 hidden sm:table-cell text-xs">
+                      {AREA_PLANT_LABEL[r.area_or_plant || ''] || '—'}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOUR[r.status] || 'bg-slate-100 text-slate-600'}`}>{r.status}</span>
+                    </td>
+                    <td className="px-5 py-3.5 text-right text-slate-400 text-xs">v{r.version}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
