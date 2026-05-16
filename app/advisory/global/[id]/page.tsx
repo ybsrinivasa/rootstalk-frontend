@@ -214,6 +214,20 @@ export default function GlobalPackageDetailPage() {
   const [publishError, setPublishError] = useState('')
   const [publishBlockers, setPublishBlockers] = useState<{ code: string; message: string }[]>([])
 
+  // Batch 39L-b (2026-05-16) — lineage state. Surfaces an existing
+  // DRAFT in the same lineage so the read-only banner offers a
+  // "Continue" link rather than a fresh clone every time.
+  interface LineageRow {
+    id: string
+    status: 'DRAFT' | 'ACTIVE' | 'INACTIVE'
+    version: number
+    published_at: string | null
+    is_current: boolean
+  }
+  const [lineage, setLineage] = useState<LineageRow[]>([])
+  const [cloning, setCloning] = useState(false)
+  const [cloneError, setCloneError] = useState('')
+
   // Batch 39B (2026-05-15): Relations on each Timeline. AND/OR simple
   // shapes only in this sub-batch; mixed AND-OR + IF land in 39C/39D.
   const [relationsByTimeline, setRelationsByTimeline] = useState<Record<string, RelationOut[]>>({})
@@ -716,7 +730,24 @@ export default function GlobalPackageDetailPage() {
       .then(r => setPkg(r.data))
       .catch(() => router.replace('/advisory/global'))
     loadTimelines()
+    // Batch 39L-b — lineage drives the read-only banner's
+    // "Continue draft" vs "Start v_N+1 draft" affordance.
+    api.get<LineageRow[]>(`/advisory/global/packages/${id}/lineage`)
+      .then(r => setLineage(r.data))
+      .catch(() => setLineage([]))
   }, [id])
+
+  async function handleCloneToDraft() {
+    setCloning(true); setCloneError('')
+    try {
+      const { data } = await api.post<Package>(
+        `/advisory/global/packages/${id}/clone-to-draft`
+      )
+      router.push(`/advisory/global/${data.id}`)
+    } catch (err: unknown) {
+      setCloneError(extractErrorMessage(err, 'Failed to start a new draft.'))
+    } finally { setCloning(false) }
+  }
 
   const loadPractices = (tlId: string) =>
     api.get<Practice[]>(`/advisory/global/packages/${id}/timelines/${tlId}/practices`)
@@ -1892,9 +1923,49 @@ export default function GlobalPackageDetailPage() {
 
   if (!pkg) return <AdminLayout><div className="pt-20 text-center text-slate-400">Loading…</div></AdminLayout>
 
+  // Batch 39L-b — read-only banner state. The detail page renders
+  // the same authoring affordances for any package status, but when
+  // pkg.status is not DRAFT the CM is editing a snapshot that
+  // downstream clients may have pulled — so we surface a banner
+  // directing them to clone-to-draft (or continue an existing draft).
+  const readOnly = !!pkg && pkg.status !== 'DRAFT'
+  const existingDraft = lineage.find(r => r.status === 'DRAFT')
+  const nextVersion = pkg ? (pkg.published_at == null ? pkg.version : Math.max(...lineage.map(r => r.version), pkg.version) + 1) : 0
   return (
     <AdminLayout>
       <div className="max-w-4xl space-y-6">
+        {/* Read-only banner — Batch 39L-b */}
+        {readOnly && pkg && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-900">
+                {pkg.status === 'ACTIVE'
+                  ? `v${pkg.version} is the published version.`
+                  : `v${pkg.version} is a previous (INACTIVE) version.`}
+              </p>
+              <p className="text-xs text-amber-800 mt-0.5">
+                To make changes, start a new draft.
+                {existingDraft && existingDraft.id !== pkg.id && (
+                  <> A v{existingDraft.version} DRAFT already exists in this lineage.</>
+                )}
+              </p>
+              {cloneError && <p className="text-xs text-red-600 mt-1">{cloneError}</p>}
+            </div>
+            <div className="flex gap-2 shrink-0">
+              {existingDraft && existingDraft.id !== pkg.id ? (
+                <Link href={`/advisory/global/${existingDraft.id}`}
+                  className="bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-amber-700">
+                  Continue v{existingDraft.version} draft →
+                </Link>
+              ) : (
+                <button onClick={handleCloneToDraft} disabled={cloning}
+                  className="bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-amber-700 disabled:opacity-50">
+                  {cloning ? 'Starting…' : `Start v${nextVersion} draft`}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {/* Header */}
         <div className="flex items-start gap-4">
           <button onClick={() => router.back()} className="mt-1 text-slate-400 hover:text-slate-600">
