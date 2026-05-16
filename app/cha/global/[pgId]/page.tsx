@@ -18,7 +18,12 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import { RelationsSection, type RelationOut } from '@/components/advisory-authoring/RelationsSection'
-import { CQsSection } from '@/components/advisory-authoring/CQsSection'
+import { CQsSection, type CQOut } from '@/components/advisory-authoring/CQsSection'
+import { PublishModal } from '@/components/advisory-authoring/PublishModal'
+import {
+  ReadOnlyBanner, VersionHistorySection,
+  type LineageRow,
+} from '@/components/advisory-authoring/LineageSection'
 import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
 
@@ -26,7 +31,7 @@ interface PGRec {
   id: string
   problem_group_cosh_id: string
   area_or_plant: string | null
-  status: string
+  status: 'DRAFT' | 'ACTIVE' | 'INACTIVE'
   version: number
 }
 
@@ -96,6 +101,15 @@ export default function GlobalPGDetailPage() {
   // map is needed by the CQ section's attachment picker (relations
   // are valid YES/NO targets); we keep it via the callback.
   const [relationsByTimeline, setRelationsByTimeline] = useState<Record<string, RelationOut[]>>({})
+  const [cqsByTimeline, setCqsByTimeline] = useState<Record<string, CQOut[]>>({})
+
+  // Batch 39P-d (2026-05-16) — publish lifecycle.
+  const [showPublishModal, setShowPublishModal] = useState(false)
+  const [publishBlockers, setPublishBlockers] = useState<{ code: string; message: string }[]>([])
+  const [lineage, setLineage] = useState<LineageRow[]>([])
+  const [cloning, setCloning] = useState(false)
+  const [cloneError, setCloneError] = useState('')
+  const [makingEditable, setMakingEditable] = useState<string | null>(null)
 
   const loadTimelines = async () => {
     const { data } = await api.get<PGTimeline[]>(
@@ -123,6 +137,10 @@ export default function GlobalPGDetailPage() {
         if (match) setPgName(match.name_en)
       })
       .catch(() => {})
+    // Lineage drives the read-only banner + version history panel.
+    api.get<LineageRow[]>(`/advisory/global/pg-recommendations/${pgId}/lineage`)
+      .then(r => setLineage(r.data))
+      .catch(() => setLineage([]))
   }, [pgId])
 
   // Re-resolve PG name when the recommendation row loads (the catalogue
@@ -142,15 +160,60 @@ export default function GlobalPGDetailPage() {
   }
 
   async function handlePublish() {
-    setPublishing(true); setPublishError('')
+    setPublishing(true); setPublishError(''); setPublishBlockers([])
     try {
       const { data } = await api.post<PGRec>(
         `/advisory/global/pg-recommendations/${pgId}/publish`,
       )
       setPg(data)
+      setShowPublishModal(false)
+      // Reload lineage — the newly-published row replaces the prior
+      // ACTIVE in the same lineage.
+      api.get<LineageRow[]>(`/advisory/global/pg-recommendations/${pgId}/lineage`)
+        .then(r => setLineage(r.data))
+        .catch(() => {})
     } catch (err: unknown) {
-      setPublishError(extractErrorMessage(err, 'Failed to publish.'))
+      const detail = (err as { response?: { data?: { detail?: { code?: string; missing?: { code: string; message: string }[] } | string } } })
+        ?.response?.data?.detail
+      if (typeof detail === 'object' && detail?.code === 'publish_blocked' && Array.isArray(detail.missing)) {
+        setPublishBlockers(detail.missing.map(m => ({ code: m.code, message: m.message })))
+      } else {
+        setPublishError(extractErrorMessage(err, 'Failed to publish.'))
+      }
     } finally { setPublishing(false) }
+  }
+
+  async function handleCloneToDraft() {
+    setCloning(true); setCloneError('')
+    try {
+      const { data } = await api.post<PGRec>(
+        `/advisory/global/pg-recommendations/${pgId}/clone-to-draft`,
+      )
+      router.push(`/cha/global/${data.id}`)
+    } catch (err: unknown) {
+      setCloneError(extractErrorMessage(err, 'Failed to start a new draft.'))
+    } finally { setCloning(false) }
+  }
+
+  async function handleMakeEditable(srcId: string, srcVersion: number) {
+    const existing = lineage.find(r => r.status === 'DRAFT')
+    if (existing && existing.id !== srcId) {
+      const ok = confirm(
+        `A v${existing.version} DRAFT already exists in this lineage. ` +
+        `Making v${srcVersion} editable will replace it (the existing ` +
+        `draft becomes INACTIVE). Continue?`
+      )
+      if (!ok) return
+    }
+    setMakingEditable(srcId); setCloneError('')
+    try {
+      const { data } = await api.post<PGRec>(
+        `/advisory/global/pg-recommendations/${srcId}/clone-to-draft`,
+      )
+      router.push(`/cha/global/${data.id}`)
+    } catch (err: unknown) {
+      setCloneError(extractErrorMessage(err, 'Failed to make this version editable.'))
+    } finally { setMakingEditable(null) }
   }
 
   async function handleAddTimeline(e: FormEvent) {
@@ -196,6 +259,11 @@ export default function GlobalPGDetailPage() {
 
   if (!pg) return <AdminLayout><div className="pt-20 text-center text-slate-400">Loading…</div></AdminLayout>
 
+  const existingDraft = lineage.find(r => r.status === 'DRAFT' && r.id !== pg.id) || null
+  const nextVersion = pg.status === 'DRAFT'
+    ? pg.version
+    : Math.max(...lineage.map(r => r.version), pg.version) + 1
+
   return (
     <AdminLayout>
       <div className="max-w-4xl space-y-6">
@@ -204,6 +272,25 @@ export default function GlobalPGDetailPage() {
             ← Back to CHA Library
           </Link>
         </div>
+
+        <ReadOnlyBanner
+          status={pg.status}
+          currentVersion={pg.version}
+          nextVersion={nextVersion}
+          existingDraft={existingDraft}
+          continueDraftHref={(draft) => `/cha/global/${draft.id}`}
+          cloning={cloning}
+          cloneError={cloneError}
+          onCloneToDraft={handleCloneToDraft}
+        />
+
+        <VersionHistorySection
+          lineage={lineage}
+          rowDetailUrl={(row) => `/cha/global/${row.id}`}
+          makingEditable={makingEditable}
+          onMakeEditable={handleMakeEditable}
+        />
+
         <div className="flex items-start gap-4">
           <div className="flex-1">
             <div className="flex items-center gap-3 flex-wrap">
@@ -214,9 +301,12 @@ export default function GlobalPGDetailPage() {
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLOUR[pg.status] || 'bg-slate-100 text-slate-600'}`}>
                 {pg.status}
               </span>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-900 text-white">
+                v{pg.version}
+              </span>
             </div>
             <p className="text-slate-500 text-sm mt-1">
-              {AREA_PLANT_LABEL[pg.area_or_plant || ''] || '—'} · v{pg.version}
+              {AREA_PLANT_LABEL[pg.area_or_plant || ''] || '—'}
             </p>
             {!pgName && (
               <p className="text-[11px] font-mono text-slate-400 mt-0.5">
@@ -225,14 +315,16 @@ export default function GlobalPGDetailPage() {
             )}
           </div>
           {pg.status === 'DRAFT' && (
-            <button onClick={handlePublish} disabled={publishing}
-              className="shrink-0 bg-blue-600 text-white text-sm font-semibold px-4 py-2.5 rounded-xl disabled:opacity-50">
-              {publishing ? 'Publishing…' : '✓ Publish'}
+            <button onClick={() => {
+              setPublishError(''); setPublishBlockers([]); setShowPublishModal(true)
+            }}
+              className="shrink-0 bg-blue-600 text-white text-sm font-semibold px-4 py-2.5 rounded-xl">
+              ✓ Publish
             </button>
           )}
         </div>
 
-        {publishError && <p className="text-sm text-red-600">{publishError}</p>}
+        {publishError && !showPublishModal && <p className="text-sm text-red-600">{publishError}</p>}
 
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
           <strong>Global PG recommendation</strong> — Clients import and customise this for their crops + districts. Practice authoring depth (Brand Lock, cascading L0/L1/L2, element form, Relations, Conditional Questions) lands in later batches.
@@ -303,6 +395,9 @@ export default function GlobalPGDetailPage() {
                         practices={practiceMap[tl.id] || []}
                         relations={relationsByTimeline[tl.id] || []}
                         pipe={{ pipe: 'PG_GLOBAL', parentId: pgId }}
+                        onCQsChange={(tid, list) =>
+                          setCqsByTimeline(m => ({ ...m, [tid]: list }))
+                        }
                       />
                     </div>
                   )}
@@ -403,6 +498,38 @@ export default function GlobalPGDetailPage() {
           </div>
         )}
 
+        {showPublishModal && (() => {
+          let tlCount = 0, practiceCount = 0, relCount = 0, cqCount = 0
+          for (const tl of timelines) {
+            tlCount++
+            practiceCount += (practiceMap[tl.id] || []).length
+            relCount += (relationsByTimeline[tl.id] || []).length
+            cqCount += (cqsByTimeline[tl.id] || []).length
+          }
+          return (
+            <PublishModal
+              entityLabel="PG Recommendation"
+              currentVersion={pg.version}
+              // PG has no `published_at`; the "first publish" signal
+              // is "still in DRAFT for the first time". After the
+              // first publish, status flips to ACTIVE / INACTIVE.
+              isFirstPublish={pg.status === 'DRAFT' && pg.version === 1}
+              contentSnapshot={{
+                timelines: tlCount,
+                practices: practiceCount,
+                relations: relCount,
+                cqs: cqCount,
+              }}
+              blockers={publishBlockers}
+              error={publishError}
+              publishing={publishing}
+              onConfirm={handlePublish}
+              onCancel={() => {
+                setShowPublishModal(false); setPublishError(''); setPublishBlockers([])
+              }}
+            />
+          )
+        })()}
       </div>
     </AdminLayout>
   )

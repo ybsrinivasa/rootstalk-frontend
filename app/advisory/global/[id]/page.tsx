@@ -5,11 +5,18 @@ import Link from 'next/link'
 import AdminLayout from '@/components/AdminLayout'
 import { RelationsSection } from '@/components/advisory-authoring/RelationsSection'
 import { CQsSection } from '@/components/advisory-authoring/CQsSection'
+import { PublishModal } from '@/components/advisory-authoring/PublishModal'
+import {
+  ReadOnlyBanner, VersionHistorySection,
+  type LineageRow as SharedLineageRow,
+} from '@/components/advisory-authoring/LineageSection'
 import api from '@/lib/api'
 
 interface Package {
   id: string; name: string; crop_cosh_id: string
-  package_type: string; status: string; duration_days: number
+  package_type: string
+  status: 'DRAFT' | 'ACTIVE' | 'INACTIVE'
+  duration_days: number
   version: number; description: string | null; created_at: string
   start_date_label_cosh_id: string | null
   published_at: string | null
@@ -1352,88 +1359,37 @@ export default function GlobalPackageDetailPage() {
   // pkg.status is not DRAFT the CM is editing a snapshot that
   // downstream clients may have pulled — so we surface a banner
   // directing them to clone-to-draft (or continue an existing draft).
-  const readOnly = !!pkg && pkg.status !== 'DRAFT'
-  const existingDraft = lineage.find(r => r.status === 'DRAFT')
+  const existingDraft = lineage.find(r => r.status === 'DRAFT' && r.id !== pkg?.id) || null
   const nextVersion = pkg ? (pkg.published_at == null ? pkg.version : Math.max(...lineage.map(r => r.version), pkg.version) + 1) : 0
   return (
     <AdminLayout>
       <div className="max-w-4xl space-y-6">
-        {/* Read-only banner — Batch 39L-b */}
-        {readOnly && pkg && (
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3 flex-wrap">
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-amber-900">
-                {pkg.status === 'ACTIVE'
-                  ? `v${pkg.version} is the published version.`
-                  : `v${pkg.version} is a previous (INACTIVE) version.`}
-              </p>
-              <p className="text-xs text-amber-800 mt-0.5">
-                To make changes, start a new draft.
-                {existingDraft && existingDraft.id !== pkg.id && (
-                  <> A v{existingDraft.version} DRAFT already exists in this lineage.</>
-                )}
-              </p>
-              {cloneError && <p className="text-xs text-red-600 mt-1">{cloneError}</p>}
-            </div>
-            <div className="flex gap-2 shrink-0">
-              {existingDraft && existingDraft.id !== pkg.id ? (
-                <Link href={`/advisory/global/${existingDraft.id}`}
-                  className="bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-amber-700">
-                  Continue v{existingDraft.version} draft →
-                </Link>
-              ) : (
-                <button onClick={handleCloneToDraft} disabled={cloning}
-                  className="bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-amber-700 disabled:opacity-50">
-                  {cloning ? 'Starting…' : `Start v${nextVersion} draft`}
-                </button>
-              )}
-            </div>
-          </div>
+        {pkg && (
+          <ReadOnlyBanner
+            status={pkg.status}
+            currentVersion={pkg.version}
+            nextVersion={nextVersion}
+            existingDraft={existingDraft as SharedLineageRow | null}
+            continueDraftHref={(draft) => `/advisory/global/${draft.id}`}
+            cloning={cloning}
+            cloneError={cloneError}
+            onCloneToDraft={handleCloneToDraft}
+          />
         )}
-        {/* Version history panel — Batch 39L-c. Surfaces every row in
-            the lineage so the CM can navigate between versions and pull
-            a historical (INACTIVE) version back into a new editable
-            DRAFT without typing URLs. */}
-        {lineage.length > 1 && (
-          <details className="bg-white border border-slate-200 rounded-2xl" open={lineage.length <= 5}>
-            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 rounded-2xl">
-              Version history ({lineage.length} versions)
-            </summary>
-            <ul className="divide-y divide-slate-100 border-t border-slate-100">
-              {lineage.map(row => (
-                <li key={row.id} className="px-4 py-3 flex items-center gap-3 flex-wrap text-sm">
-                  <span className="font-semibold text-slate-900 min-w-[2.5rem]">v{row.version}</span>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLOUR[row.status] || 'bg-slate-100 text-slate-600'}`}>
-                    {row.status}
-                  </span>
-                  {row.published_at && (
-                    <span className="text-xs text-slate-500">
-                      published {new Date(row.published_at).toLocaleDateString()}
-                    </span>
-                  )}
-                  {row.is_current && (
-                    <span className="text-xs text-slate-500 italic">(viewing)</span>
-                  )}
-                  <div className="ml-auto flex items-center gap-3">
-                    {!row.is_current && (
-                      <Link href={`/advisory/global/${row.id}`}
-                        className="text-xs text-blue-600 hover:underline">
-                        {row.status === 'DRAFT' ? 'Open draft →' : 'View →'}
-                      </Link>
-                    )}
-                    {!row.is_current && row.status === 'INACTIVE' && (
-                      <button onClick={() => handleMakeEditable(row.id, row.version)}
-                        disabled={makingEditable !== null}
-                        className="text-xs font-semibold text-amber-700 hover:underline disabled:opacity-50">
-                        {makingEditable === row.id ? 'Working…' : 'Make editable'}
-                      </button>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
+        <VersionHistorySection
+          lineage={lineage as SharedLineageRow[]}
+          rowDetailUrl={(row) => `/advisory/global/${row.id}`}
+          makingEditable={makingEditable}
+          onMakeEditable={handleMakeEditable}
+          publishedAtChip={(row) => {
+            const lr = row as SharedLineageRow & { published_at?: string | null }
+            return lr.published_at ? (
+              <span className="text-xs text-slate-500">
+                published {new Date(lr.published_at).toLocaleDateString()}
+              </span>
+            ) : null
+          }}
+        />
         {/* Header */}
         <div className="flex items-start gap-4">
           <button onClick={() => router.back()} className="mt-1 text-slate-400 hover:text-slate-600">
@@ -1690,86 +1646,34 @@ export default function GlobalPackageDetailPage() {
           )}
         </div>
 
-        {/* Add Timeline Modal */}
-        {/* Publish Modal — Batch 39L-a (2026-05-16). Shows version
-            transition, content summary, and any backend-side
-            blockers. The blocker list comes from the publish 422
-            (publish_blocked) so the CM sees the full checklist in
-            one round-trip. */}
-        {showPublishModal && (() => {
-          const counts = (() => {
-            let tlCount = 0, practiceCount = 0, relCount = 0, cqCount = 0
-            for (const tl of timelines) {
-              if (tl.status === 'INACTIVE') continue
-              tlCount++
-              practiceCount += (practiceMap[tl.id] || []).length
-              relCount += (relationsByTimeline[tl.id] || []).length
-              cqCount += (cqsByTimeline[tl.id] || []).length
-            }
-            return { tlCount, practiceCount, relCount, cqCount }
-          })()
-          const nextVersion = pkg.published_at == null ? pkg.version : pkg.version + 1
-          const isFirstPublish = pkg.published_at == null
+        {showPublishModal && pkg && (() => {
+          let tlCount = 0, practiceCount = 0, relCount = 0, cqCount = 0
+          for (const tl of timelines) {
+            if (tl.status === 'INACTIVE') continue
+            tlCount++
+            practiceCount += (practiceMap[tl.id] || []).length
+            relCount += (relationsByTimeline[tl.id] || []).length
+            cqCount += (cqsByTimeline[tl.id] || []).length
+          }
           return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
-                <div className="p-6 border-b border-slate-100">
-                  <h2 className="font-bold text-slate-900">Publish Package</h2>
-                  <p className="text-slate-500 text-sm mt-0.5">
-                    Once published, the Package becomes available for CMs to assign to clients.
-                  </p>
-                </div>
-                <div className="p-6 space-y-4 overflow-y-auto">
-                  <div className="bg-slate-50 rounded-xl p-4">
-                    <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Version</p>
-                    <p className="text-sm font-medium text-slate-800 mt-1">
-                      {isFirstPublish ? (
-                        <>First publish — will become <span className="font-bold">v{nextVersion}</span></>
-                      ) : (
-                        <>v{pkg.version} → <span className="font-bold">v{nextVersion}</span></>
-                      )}
-                    </p>
-                  </div>
-                  <div className="bg-slate-50 rounded-xl p-4">
-                    <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Content snapshot</p>
-                    <ul className="text-sm text-slate-700 space-y-1">
-                      <li>{counts.tlCount} active Timeline{counts.tlCount === 1 ? '' : 's'}</li>
-                      <li>{counts.practiceCount} Practice{counts.practiceCount === 1 ? '' : 's'}</li>
-                      <li>{counts.relCount} Relation{counts.relCount === 1 ? '' : 's'}</li>
-                      <li>{counts.cqCount} Conditional Question{counts.cqCount === 1 ? '' : 's'}</li>
-                    </ul>
-                  </div>
-                  {publishBlockers.length > 0 && (
-                    <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-                      <p className="text-[11px] uppercase tracking-wider text-red-700 font-semibold mb-2">Blocking issues</p>
-                      <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
-                        {publishBlockers.map(b => (
-                          <li key={b.code + b.message}>{b.message}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {publishError && publishBlockers.length === 0 && (
-                    <p className="text-sm text-red-600">{publishError}</p>
-                  )}
-                </div>
-                <div className="px-6 pb-6 flex gap-3">
-                  <button type="button"
-                    onClick={() => {
-                      setShowPublishModal(false); setPublishError(''); setPublishBlockers([])
-                    }}
-                    className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">
-                    Cancel
-                  </button>
-                  <button type="button"
-                    onClick={handlePublish}
-                    disabled={publishing}
-                    className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
-                    {publishing ? 'Publishing…' : `Publish v${nextVersion}`}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <PublishModal
+              entityLabel="Package"
+              currentVersion={pkg.version}
+              isFirstPublish={pkg.published_at == null}
+              contentSnapshot={{
+                timelines: tlCount,
+                practices: practiceCount,
+                relations: relCount,
+                cqs: cqCount,
+              }}
+              blockers={publishBlockers}
+              error={publishError}
+              publishing={publishing}
+              onConfirm={handlePublish}
+              onCancel={() => {
+                setShowPublishModal(false); setPublishError(''); setPublishBlockers([])
+              }}
+            />
           )
         })()}
 

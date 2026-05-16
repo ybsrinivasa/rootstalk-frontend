@@ -75,3 +75,34 @@ export function cqEndpoints(ctx: PipeContext): CQEndpoints {
     bindRelation: (relationId) => `/advisory/global/relations/${relationId}/conditionals`,
   }
 }
+
+export interface LifecycleEndpoints {
+  /** POST — publish this version. 422 `publish_blocked` returns the
+   *  full gates checklist; the modal renders that body inline. */
+  publish: string
+  /** POST — clone an ACTIVE/INACTIVE row into a new DRAFT. */
+  cloneToDraft: string
+  /** GET — lineage rows (DRAFT first, then version desc, with
+   *  `is_current` flagging the path's row). */
+  lineage: string
+}
+
+export function lifecycleEndpoints(ctx: PipeContext): LifecycleEndpoints {
+  const base = parentSegment(ctx)
+  return {
+    publish: `${base}/publish`,
+    cloneToDraft: `${base}/clone-to-draft`,
+    lineage: `${base}/lineage`,
+  }
+}
+
+/** Builds the URL for the parent entity itself (e.g., for navigation
+ *  to a different version of the same lineage). */
+export function parentDetailUrl(ctx: PipeContext): string {
+  switch (ctx.pipe) {
+    case 'CCA_GLOBAL':
+      return `/advisory/global/${ctx.parentId}`
+    case 'PG_GLOBAL':
+      return `/cha/global/${ctx.parentId}`
+  }
+}
