@@ -4,6 +4,10 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
+import {
+  PracticeCard, RelationCard, CQCard,
+  type PreviewPractice,
+} from '@/components/advisory-authoring/PreviewCards'
 
 // Batch 39J (2026-05-16) — read-only Package Preview. The SE views
 // the package the way a farmer would, with practices ordered by
@@ -375,19 +379,29 @@ export default function PackagePreviewPage() {
                     </span>
                   </div>
                   <div className="space-y-2 ml-1">
-                    {standaloneRelations.map(rel => (
-                      <RelationCard key={rel.id} rel={rel}
-                        practicesByTl={practicesByTl} timeline={tl} />
-                    ))}
-                    {standalonePractices.map(p => (
-                      <PracticeCard key={p.id} practice={p} timeline={tl} />
-                    ))}
-                    {cqs.map(cq => (
-                      <CQCard key={cq.id} cq={cq}
-                        practicesByTl={practicesByTl}
-                        relationsByTl={relationsByTl}
-                        timeline={tl} />
-                    ))}
+                    {(() => {
+                      const tlLabel = `${tl.name} · ${formatTimelineRange(tl)}`
+                      const tlPractices = (practicesByTl[tl.id] || []) as PreviewPractice[]
+                      const tlRelations = relationsByTl[tl.id] || []
+                      return (
+                        <>
+                          {standaloneRelations.map(rel => (
+                            <RelationCard key={rel.id} rel={rel}
+                              practices={tlPractices} timelineLabel={tlLabel} />
+                          ))}
+                          {standalonePractices.map(p => (
+                            <PracticeCard key={p.id} practice={p as PreviewPractice}
+                              timelineLabel={tlLabel} />
+                          ))}
+                          {cqs.map(cq => (
+                            <CQCard key={cq.id} cq={cq}
+                              practices={tlPractices}
+                              relations={tlRelations}
+                              timelineLabel={tlLabel} />
+                          ))}
+                        </>
+                      )
+                    })()}
                   </div>
                 </div>
               )
@@ -520,181 +534,6 @@ function PerennialCoverageRing({ timelines, startDate }: {
         <p><span className="inline-block w-3 h-3 bg-blue-400 align-middle rounded-sm mr-1" /> covered by a timeline</p>
         <p><span className="inline-block w-3 h-3 bg-slate-200 align-middle rounded-sm mr-1" /> uncovered</p>
         <p>The dark radial line marks today's date — practices to the right of it are upcoming.</p>
-      </div>
-    </div>
-  )
-}
-
-// ── Practice card ────────────────────────────────────────────────────────
-function PracticeCard({ practice, timeline }: { practice: Practice; timeline: Timeline }) {
-  return (
-    <div className="border border-slate-200 rounded-xl p-3">
-      <div className="flex items-center gap-2 flex-wrap mb-1">
-        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${L0_COLOUR[practice.l0_type] || 'bg-slate-100'}`}>
-          {practice.l0_type}
-        </span>
-        <span className="text-sm font-medium text-slate-800 break-words">{practiceShortLabel(practice)}</span>
-        {practice.is_special_input && <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">special</span>}
-        {practice.is_brand_locked && <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">🔒 locked</span>}
-        <span className="ml-auto text-[11px] text-slate-400">
-          {timeline.name} · {formatTimelineRange(timeline)}
-        </span>
-      </div>
-      {practice.elements && practice.elements.length > 0 && (
-        <ElementDetailList elements={practice.elements} />
-      )}
-    </div>
-  )
-}
-
-function ElementDetailList({ elements }: { elements: PracticeElement[] }) {
-  return (
-    <div className="mt-2 space-y-1 pl-1 border-l-2 border-slate-100">
-      {elements.map(el => {
-        const url = el.value || ''
-        const isImg = el.element_type === 'UPLOAD_IMAGE' && url
-        const isAud = el.element_type === 'UPLOAD_AUDIO' && url
-        const isLnk = el.element_type === 'HYPERLINK' && url
-        return (
-          <div key={el.element_type} className={isImg || isAud || isLnk ? 'flex items-start gap-2 text-xs pl-2' : 'flex items-baseline gap-2 text-xs pl-2'}>
-            <span className="text-slate-500 min-w-[140px] shrink-0">{el.label}:</span>
-            <span className="text-slate-800 font-medium min-w-0 break-words">
-              {isImg ? (
-                <a href={url} target="_blank" rel="noopener noreferrer">
-                  <img src={url} alt="" className="max-h-24 rounded border border-slate-200" />
-                </a>
-              ) : isAud ? (
-                // eslint-disable-next-line jsx-a11y/media-has-caption
-                <audio controls src={url} className="max-w-xs" />
-              ) : isLnk ? (
-                <HyperlinkPreviewMini url={url} />
-              ) : (
-                el.display_value || <span className="text-slate-300 italic">—</span>
-              )}
-            </span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function HyperlinkPreviewMini({ url }: { url: string }) {
-  const yt = isYouTube(url)
-  if (yt) {
-    return (
-      <a href={url} target="_blank" rel="noopener noreferrer"
-        className="inline-flex items-center gap-2 border border-slate-200 rounded-lg overflow-hidden hover:border-blue-400 max-w-xs">
-        <div className="relative w-20 aspect-video bg-slate-100 shrink-0">
-          <img src={`https://img.youtube.com/vi/${yt.id}/hqdefault.jpg`} alt="" className="w-full h-full object-cover" />
-        </div>
-        <span className="text-[11px] text-slate-600 pr-2 truncate">YouTube</span>
-      </a>
-    )
-  }
-  return (
-    <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all">{url}</a>
-  )
-}
-
-// ── Relation card ────────────────────────────────────────────────────────
-function RelationCard({ rel, practicesByTl, timeline }: {
-  rel: RelationOut
-  practicesByTl: Record<string, Practice[]>
-  timeline: Timeline
-}) {
-  const allPractices = practicesByTl[timeline.id] || []
-  const findP = (pid: string) => allPractices.find(p => p.id === pid) || null
-  const typeColour =
-    rel.relation_type === 'AND' ? 'bg-blue-100 text-blue-700' :
-    rel.relation_type === 'OR'  ? 'bg-amber-100 text-amber-700' :
-                                  'bg-purple-100 text-purple-700'
-  // Render expression. Walks the 3-D shape.
-  function renderExpression(): string {
-    const labelFor = (pid: string) => {
-      const p = findP(pid)
-      return p ? practiceLabel(p) : pid.slice(0, 8)
-    }
-    const partTexts: string[] = []
-    for (const part of rel.parts) {
-      const optTexts: string[] = []
-      for (const opt of part) {
-        if (opt.length === 0) continue
-        optTexts.push(opt.length === 1 ? labelFor(opt[0]) : '(' + opt.map(labelFor).join(' + ') + ')')
-      }
-      if (optTexts.length === 0) continue
-      partTexts.push(optTexts.length === 1 ? optTexts[0] : optTexts.join(' or '))
-    }
-    return rel.expression || partTexts.join(rel.relation_type === 'OR' ? ' or ' : ' + ')
-  }
-  return (
-    <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/40">
-      <div className="flex items-center gap-2 flex-wrap mb-2">
-        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${typeColour}`}>{rel.relation_type}</span>
-        <span className="text-sm font-medium text-slate-800 break-words flex-1 min-w-0">{renderExpression()}</span>
-        <span className="text-[11px] text-slate-400">
-          {timeline.name} · {formatTimelineRange(timeline)}
-        </span>
-      </div>
-      <div className="space-y-2 ml-1 border-l-2 border-slate-200 pl-3">
-        {rel.parts.map((part, pIdx) => (
-          <div key={pIdx} className="space-y-1">
-            {pIdx > 0 && rel.relation_type !== 'OR' && (
-              <div className="text-[10px] uppercase tracking-wider text-blue-600 font-semibold">AND</div>
-            )}
-            {part.map((opt, oIdx) => (
-              <div key={oIdx}>
-                {oIdx > 0 && (
-                  <div className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold">OR</div>
-                )}
-                {opt.map(pid => {
-                  const p = findP(pid)
-                  if (!p) return null
-                  return <PracticeCard key={pid} practice={p} timeline={timeline} />
-                })}
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ── Conditional Question card ────────────────────────────────────────────
-function CQCard({ cq, practicesByTl, relationsByTl, timeline }: {
-  cq: CQOut
-  practicesByTl: Record<string, Practice[]>
-  relationsByTl: Record<string, RelationOut[]>
-  timeline: Timeline
-}) {
-  const renderSide = (side: CQAttachment | null) => {
-    if (!side) return <span className="text-slate-400 italic text-xs">—</span>
-    if (side.kind === 'practice') {
-      const p = (practicesByTl[timeline.id] || []).find(x => x.id === side.id)
-      if (!p) return <span className="text-slate-400 italic text-xs">—</span>
-      return <PracticeCard practice={p} timeline={timeline} />
-    }
-    const r = (relationsByTl[timeline.id] || []).find(x => x.id === side.id)
-    if (!r) return <span className="text-slate-400 italic text-xs">—</span>
-    return <RelationCard rel={r} practicesByTl={practicesByTl} timeline={timeline} />
-  }
-  return (
-    <div className="border border-purple-200 rounded-xl p-3 bg-purple-50/30">
-      <div className="flex items-center gap-2 flex-wrap mb-2">
-        <span className="text-[10px] uppercase tracking-wider text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded font-semibold">IF</span>
-        <span className="text-sm font-medium text-slate-800 break-words flex-1 min-w-0">{cq.question_text}</span>
-        <span className="text-[11px] text-slate-400">{timeline.name} · {formatTimelineRange(timeline)}</span>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <p className="text-[10px] uppercase tracking-wider text-emerald-800 bg-emerald-100 inline-block px-1.5 py-0.5 rounded font-semibold mb-1.5">YES</p>
-          {renderSide(cq.yes)}
-        </div>
-        <div>
-          <p className="text-[10px] uppercase tracking-wider text-rose-800 bg-rose-100 inline-block px-1.5 py-0.5 rounded font-semibold mb-1.5">NO</p>
-          {renderSide(cq.no)}
-        </div>
       </div>
     </div>
   )

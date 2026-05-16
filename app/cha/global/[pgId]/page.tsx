@@ -314,14 +314,20 @@ export default function GlobalPGDetailPage() {
               </p>
             )}
           </div>
-          {pg.status === 'DRAFT' && (
-            <button onClick={() => {
-              setPublishError(''); setPublishBlockers([]); setShowPublishModal(true)
-            }}
-              className="shrink-0 bg-blue-600 text-white text-sm font-semibold px-4 py-2.5 rounded-xl">
-              ✓ Publish
-            </button>
-          )}
+          <div className="flex gap-2 shrink-0">
+            <Link href={`/cha/global/${pgId}/preview`}
+              className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50">
+              👁 Preview
+            </Link>
+            {pg.status === 'DRAFT' && (
+              <button onClick={() => {
+                setPublishError(''); setPublishBlockers([]); setShowPublishModal(true)
+              }}
+                className="bg-blue-600 text-white text-sm font-semibold px-4 py-2.5 rounded-xl">
+                ✓ Publish
+              </button>
+            )}
+          </div>
         </div>
 
         {publishError && !showPublishModal && <p className="text-sm text-red-600">{publishError}</p>}
