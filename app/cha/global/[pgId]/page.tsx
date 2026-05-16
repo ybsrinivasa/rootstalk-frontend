@@ -17,7 +17,8 @@ import { useEffect, useState, FormEvent } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
-import { RelationsSection } from '@/components/advisory-authoring/RelationsSection'
+import { RelationsSection, type RelationOut } from '@/components/advisory-authoring/RelationsSection'
+import { CQsSection } from '@/components/advisory-authoring/CQsSection'
 import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
 
@@ -88,11 +89,13 @@ export default function GlobalPGDetailPage() {
   const [practiceError, setPracticeError] = useState('')
   const [practiceForm, setPracticeForm] = useState({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
 
-  // Relations are rendered inside each expanded Timeline via the
-  // shared `<RelationsSection>` component (Batch 39P-b2, 2026-05-16).
-  // The same component drives CCA's Global Package authoring; PG just
-  // passes `pipe: 'PG_GLOBAL'` so the URL builder targets the PG
-  // endpoint prefix.
+  // Relations + Conditional Questions are rendered inside each
+  // expanded Timeline via shared components (39P-b2 + 39P-c). The
+  // same components drive CCA's Global Package authoring; PG just
+  // passes `pipe: 'PG_GLOBAL'`. The `relationsByTimeline` mirror
+  // map is needed by the CQ section's attachment picker (relations
+  // are valid YES/NO targets); we keep it via the callback.
+  const [relationsByTimeline, setRelationsByTimeline] = useState<Record<string, RelationOut[]>>({})
 
   const loadTimelines = async () => {
     const { data } = await api.get<PGTimeline[]>(
@@ -282,12 +285,23 @@ export default function GlobalPGDetailPage() {
                         <button onClick={() => setShowAddPractice(tl.id)} className="text-xs font-medium text-blue-600 mt-2">+ Add Practice</button>
                       </div>
 
-                      {/* Relations subsection — shared with CCA via
-                          the same component (Batch 39P-b2). */}
+                      {/* Relations + Conditional Questions — shared
+                          with CCA via the same components (Batches
+                          39P-b2 + 39P-c). */}
                       <RelationsSection
                         timelineId={tl.id}
                         timelineName={tl.name}
                         practices={practiceMap[tl.id] || []}
+                        pipe={{ pipe: 'PG_GLOBAL', parentId: pgId }}
+                        onRelationsChange={(tid, rels) =>
+                          setRelationsByTimeline(m => ({ ...m, [tid]: rels }))
+                        }
+                      />
+                      <CQsSection
+                        timelineId={tl.id}
+                        timelineName={tl.name}
+                        practices={practiceMap[tl.id] || []}
+                        relations={relationsByTimeline[tl.id] || []}
                         pipe={{ pipe: 'PG_GLOBAL', parentId: pgId }}
                       />
                     </div>

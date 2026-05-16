@@ -49,3 +49,29 @@ export function relationEndpoints(ctx: PipeContext): RelationEndpoints {
     delete: (relationId) => `/advisory/global/relations/${relationId}`,
   }
 }
+
+export interface CQEndpoints {
+  list: (timelineId: string) => string
+  create: (timelineId: string) => string
+  /** PUT — atomic replace of question text + YES/NO bindings.
+   *  Pipe-agnostic URL (by CQ id) after Batch 39P-c. */
+  update: (cqId: string) => string
+  /** DELETE — pipe-agnostic by CQ id. */
+  delete: (cqId: string) => string
+  /** POST — bind a Practice to a CQ (Path B). */
+  bindPractice: (practiceId: string) => string
+  /** POST — bind a Relation to a CQ (Path A). */
+  bindRelation: (relationId: string) => string
+}
+
+export function cqEndpoints(ctx: PipeContext): CQEndpoints {
+  const base = parentSegment(ctx)
+  return {
+    list: (timelineId) => `${base}/timelines/${timelineId}/conditional-questions`,
+    create: (timelineId) => `${base}/timelines/${timelineId}/conditional-questions`,
+    update: (cqId) => `/advisory/global/conditional-questions/${cqId}`,
+    delete: (cqId) => `/advisory/global/conditional-questions/${cqId}`,
+    bindPractice: (practiceId) => `/advisory/global/practices/${practiceId}/conditionals`,
+    bindRelation: (relationId) => `/advisory/global/relations/${relationId}/conditionals`,
+  }
+}
