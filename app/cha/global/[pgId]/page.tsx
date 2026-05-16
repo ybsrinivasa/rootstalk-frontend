@@ -24,6 +24,7 @@ import {
   ReadOnlyBanner, VersionHistorySection,
   type LineageRow,
 } from '@/components/advisory-authoring/LineageSection'
+import { PracticeFormModal, type ExistingPractice } from '@/components/advisory-authoring/PracticeFormModal'
 import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
 
@@ -89,10 +90,12 @@ export default function GlobalPGDetailPage() {
   const [tlError, setTlError] = useState('')
   const [tlForm, setTlForm] = useState({ name: '', from_type: 'DAYS_AFTER_DETECTION', from_value: '0', to_value: '7' })
 
+  // Practice authoring goes through the shared `<PracticeFormModal>`
+  // (Batch 39P-e). `showAddPractice` carries the timeline id when
+  // the modal is open; `editingPractice` carries the practice row
+  // when the modal opens in edit mode.
   const [showAddPractice, setShowAddPractice] = useState<string | null>(null)
-  const [addingPractice, setAddingPractice] = useState(false)
-  const [practiceError, setPracticeError] = useState('')
-  const [practiceForm, setPracticeForm] = useState({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
+  const [editingPractice, setEditingPractice] = useState<{ timelineId: string; practice: PGPractice } | null>(null)
 
   // Relations + Conditional Questions are rendered inside each
   // expanded Timeline via shared components (39P-b2 + 39P-c). The
@@ -233,22 +236,12 @@ export default function GlobalPGDetailPage() {
     } finally { setAddingTL(false) }
   }
 
-  async function handleAddPractice(e: FormEvent) {
-    e.preventDefault()
-    if (!showAddPractice) return
-    setAddingPractice(true); setPracticeError('')
-    try {
-      await api.post(`/advisory/global/pg-recommendations/${pgId}/timelines/${showAddPractice}/practices`, {
-        l0_type: practiceForm.l0_type, l1_type: practiceForm.l1_type || null,
-        l2_type: practiceForm.l2_type || null, display_order: parseInt(practiceForm.display_order),
-        is_special_input: practiceForm.is_special_input, elements: [],
-      })
-      setShowAddPractice(null)
-      setPracticeForm({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
-      await loadTimelines()
-    } catch (err: unknown) {
-      setPracticeError(extractErrorMessage(err, 'Failed to add practice.'))
-    } finally { setAddingPractice(false) }
+  async function handleDeletePractice(tlId: string, practiceId: string) {
+    if (!confirm('Delete this practice?')) return
+    await api.delete(
+      `/advisory/global/pg-recommendations/${pgId}/timelines/${tlId}/practices/${practiceId}`,
+    )
+    await loadTimelines()
   }
 
   async function deleteTL(tl: PGTimeline) {
@@ -378,9 +371,24 @@ export default function GlobalPGDetailPage() {
                           <div key={p.id} className="flex items-center gap-3 py-2 border-b border-slate-50 last:border-0">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>{p.l0_type}</span>
                             <span className="text-sm text-slate-700 flex-1">{[p.l1_type, p.l2_type].filter(Boolean).join(' › ') || <span className="text-slate-400 italic">No sub-type</span>}</span>
+                            <button onClick={() => {
+                              setEditingPractice({ timelineId: tl.id, practice: p })
+                              setShowAddPractice(tl.id)
+                            }}
+                              className="text-xs text-blue-600 hover:underline">Edit</button>
+                            <button onClick={() => handleDeletePractice(tl.id, p.id)}
+                              className="text-xs text-slate-300 hover:text-red-500">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
                           </div>
                         ))}
-                        <button onClick={() => setShowAddPractice(tl.id)} className="text-xs font-medium text-blue-600 mt-2">+ Add Practice</button>
+                        <button onClick={() => {
+                          setEditingPractice(null)
+                          setShowAddPractice(tl.id)
+                        }}
+                          className="text-xs font-medium text-blue-600 mt-2">+ Add Practice</button>
                       </div>
 
                       {/* Relations + Conditional Questions — shared
@@ -458,51 +466,25 @@ export default function GlobalPGDetailPage() {
           </div>
         )}
 
-        {showAddPractice && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-              <div className="p-6 border-b border-slate-100"><h2 className="font-bold text-slate-900">Add Practice</h2></div>
-              <form onSubmit={handleAddPractice} className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Type (L0)</label>
-                  <select value={practiceForm.l0_type} onChange={e => setPracticeForm(f => ({ ...f, l0_type: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="INPUT">INPUT</option>
-                    <option value="NON_INPUT">NON_INPUT</option>
-                    <option value="INSTRUCTION">INSTRUCTION</option>
-                    <option value="MEDIA">MEDIA</option>
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1.5">L1</label>
-                    <input value={practiceForm.l1_type} onChange={e => setPracticeForm(f => ({ ...f, l1_type: e.target.value }))}
-                      placeholder="e.g. FUNGICIDE" className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1.5">L2</label>
-                    <input value={practiceForm.l2_type} onChange={e => setPracticeForm(f => ({ ...f, l2_type: e.target.value }))}
-                      placeholder="e.g. PROPICONAZOLE" className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none" />
-                  </div>
-                </div>
-                <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700">
-                  <input type="checkbox" checked={practiceForm.is_special_input}
-                    onChange={e => setPracticeForm(f => ({ ...f, is_special_input: e.target.checked }))} className="w-4 h-4 rounded" />
-                  Special input (adjuvant / never suppressed)
-                </label>
-                {practiceError && <p className="text-sm text-red-600">{practiceError}</p>}
-                <div className="flex gap-3 pt-2">
-                  <button type="button" onClick={() => { setShowAddPractice(null); setPracticeError('') }}
-                    className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm">Cancel</button>
-                  <button type="submit" disabled={addingPractice}
-                    className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
-                    {addingPractice ? 'Adding…' : 'Add Practice'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        <PracticeFormModal
+          open={!!showAddPractice}
+          mode={editingPractice ? 'edit' : 'create'}
+          timelineId={showAddPractice || ''}
+          cropCoshId={''} /* PG protocols aren't crop-bound; spec applies plant-wise extras only when crop measure says so */
+          existingPractice={editingPractice?.practice as ExistingPractice | undefined}
+          contextSubtitle={(() => {
+            if (!showAddPractice) return undefined
+            const tl = timelines.find(t => t.id === showAddPractice)
+            if (!tl) return undefined
+            return `${tl.name} · Day ${tl.from_value} → ${tl.to_value} after detection`
+          })()}
+          pipe={{ pipe: 'PG_GLOBAL', parentId: pgId }}
+          onClose={() => {
+            setShowAddPractice(null)
+            setEditingPractice(null)
+          }}
+          onSaved={() => loadTimelines()}
+        />
 
         {showPublishModal && (() => {
           let tlCount = 0, practiceCount = 0, relCount = 0, cqCount = 0

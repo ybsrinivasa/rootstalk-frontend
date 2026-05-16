@@ -76,6 +76,28 @@ export function cqEndpoints(ctx: PipeContext): CQEndpoints {
   }
 }
 
+export interface PracticeEndpoints {
+  /** POST — create a Practice on a timeline. */
+  create: (timelineId: string) => string
+  /** PUT — atomic Practice replace by id. */
+  update: (timelineId: string, practiceId: string) => string
+  /** DELETE — drop a Practice (cascades to Elements). */
+  delete: (timelineId: string, practiceId: string) => string
+  /** GET — list practices on a timeline (CCA only today). */
+  list?: (timelineId: string) => string
+}
+
+export function practiceEndpoints(ctx: PipeContext): PracticeEndpoints {
+  const base = parentSegment(ctx)
+  return {
+    create: (tl) => `${base}/timelines/${tl}/practices`,
+    update: (tl, p) => `${base}/timelines/${tl}/practices/${p}`,
+    delete: (tl, p) => `${base}/timelines/${tl}/practices/${p}`,
+    list: (tl) => `${base}/timelines/${tl}/practices`,
+  }
+}
+
+
 export interface LifecycleEndpoints {
   /** POST — publish this version. 422 `publish_blocked` returns the
    *  full gates checklist; the modal renders that body inline. */
