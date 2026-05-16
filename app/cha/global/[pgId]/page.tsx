@@ -17,6 +17,7 @@ import { useEffect, useState, FormEvent } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
+import { RelationsSection } from '@/components/advisory-authoring/RelationsSection'
 import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
 
@@ -87,23 +88,11 @@ export default function GlobalPGDetailPage() {
   const [practiceError, setPracticeError] = useState('')
   const [practiceForm, setPracticeForm] = useState({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
 
-  // Batch 39P-b (2026-05-16) — Relations on PG timelines. Simple
-  // AND / OR multi-practice picker for V1; the CCA-style chain
-  // builder (nested AND-OR + IF) lands in a follow-up when we
-  // refactor the chain builder into a shared component.
-  interface RelOut {
-    id: string
-    relation_type: 'AND' | 'OR' | 'IF'
-    expression: string | null
-    parts: string[][][]
-    conditional: { question_id: string; question_text: string | null; answer: string } | null
-  }
-  const [relationsByTimeline, setRelationsByTimeline] = useState<Record<string, RelOut[]>>({})
-  const [showAddRelation, setShowAddRelation] = useState<string | null>(null)
-  const [relType, setRelType] = useState<'AND' | 'OR'>('AND')
-  const [relPicked, setRelPicked] = useState<string[]>([])
-  const [savingRelation, setSavingRelation] = useState(false)
-  const [relationError, setRelationError] = useState('')
+  // Relations are rendered inside each expanded Timeline via the
+  // shared `<RelationsSection>` component (Batch 39P-b2, 2026-05-16).
+  // The same component drives CCA's Global Package authoring; PG just
+  // passes `pipe: 'PG_GLOBAL'` so the URL builder targets the PG
+  // endpoint prefix.
 
   const loadTimelines = async () => {
     const { data } = await api.get<PGTimeline[]>(
@@ -145,68 +134,8 @@ export default function GlobalPGDetailPage() {
       .catch(() => {})
   }, [pg?.problem_group_cosh_id])
 
-  const loadRelations = async (tlId: string) => {
-    const { data } = await api.get<RelOut[]>(
-      `/advisory/global/pg-recommendations/${pgId}/timelines/${tlId}/relations`,
-    ).catch(() => ({ data: [] as RelOut[] }))
-    setRelationsByTimeline(m => ({ ...m, [tlId]: data }))
-  }
-
   const toggle = (id: string) => {
-    setExpanded(prev => {
-      const next = prev === id ? null : id
-      if (next === id && !relationsByTimeline[id]) loadRelations(id)
-      return next
-    })
-  }
-
-  function openAddRelation(tlId: string) {
-    setShowAddRelation(tlId)
-    setRelType('AND')
-    setRelPicked([])
-    setRelationError('')
-  }
-
-  function togglePicked(practiceId: string) {
-    setRelPicked(prev =>
-      prev.includes(practiceId)
-        ? prev.filter(p => p !== practiceId)
-        : [...prev, practiceId]
-    )
-  }
-
-  async function handleSaveRelation(e: FormEvent) {
-    e.preventDefault()
-    if (!showAddRelation) return
-    if (relPicked.length < 2) {
-      setRelationError('A Relation needs at least 2 practices.')
-      return
-    }
-    // Build the 3-D `parts` shape the backend expects:
-    //   AND → all picked practices co-occur (1 part, 1 option, all positions)
-    //   OR  → each picked practice is its own option (1 part, N options, 1 position each)
-    const parts: string[][][] =
-      relType === 'AND'
-        ? [[relPicked]]
-        : [[...relPicked.map(p => [p])]]
-    setSavingRelation(true); setRelationError('')
-    try {
-      await api.post(
-        `/advisory/global/pg-recommendations/${pgId}/timelines/${showAddRelation}/relations`,
-        { relation_type: relType, parts, expression: null },
-      )
-      await loadRelations(showAddRelation)
-      setShowAddRelation(null)
-      setRelPicked([])
-    } catch (err: unknown) {
-      setRelationError(extractErrorMessage(err, 'Failed to save relation.'))
-    } finally { setSavingRelation(false) }
-  }
-
-  async function deleteRelation(relId: string, tlId: string) {
-    if (!confirm('Delete this Relation? The Practices stay; only the grouping goes.')) return
-    await api.delete(`/advisory/global/relations/${relId}`)
-    await loadRelations(tlId)
+    setExpanded(prev => prev === id ? null : id)
   }
 
   async function handlePublish() {
@@ -353,50 +282,14 @@ export default function GlobalPGDetailPage() {
                         <button onClick={() => setShowAddPractice(tl.id)} className="text-xs font-medium text-blue-600 mt-2">+ Add Practice</button>
                       </div>
 
-                      {/* Relations subsection (Batch 39P-b) */}
-                      <div className="pt-3 border-t border-slate-100">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Relations</h4>
-                          <button onClick={() => openAddRelation(tl.id)}
-                            disabled={!practiceMap[tl.id] || practiceMap[tl.id].length < 2}
-                            title={practiceMap[tl.id] && practiceMap[tl.id].length < 2 ? 'Need at least 2 practices on this timeline first.' : ''}
-                            className="text-xs font-medium text-blue-600 disabled:text-slate-300 disabled:cursor-not-allowed">
-                            + Add Relation
-                          </button>
-                        </div>
-                        {!relationsByTimeline[tl.id] || relationsByTimeline[tl.id].length === 0 ? (
-                          <p className="text-xs text-slate-400 italic">No Relations on this Timeline yet.</p>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {relationsByTimeline[tl.id].map(rel => {
-                              // Build a human-readable expression from parts.
-                              const practices = practiceMap[tl.id] || []
-                              const labelFor = (pid: string) => {
-                                const p = practices.find(x => x.id === pid)
-                                if (!p) return pid.slice(0, 8)
-                                return [p.l1_type, p.l2_type].filter(Boolean).join('/') || p.l0_type
-                              }
-                              // For V1 simple AND/OR: parts is always 1 part. Render its options.
-                              const part = rel.parts[0] || []
-                              const expression = part
-                                .map(opt => opt.map(labelFor).join(rel.relation_type === 'OR' ? ' OR ' : ' + '))
-                                .join(rel.relation_type === 'OR' ? ' OR ' : ' AND ')
-                              return (
-                                <div key={rel.id} className="flex items-center gap-2 text-xs bg-slate-50 rounded-lg px-3 py-2">
-                                  <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">{rel.relation_type}</span>
-                                  <span className="text-slate-700 flex-1 truncate" title={expression}>{expression || '(empty)'}</span>
-                                  <button onClick={() => deleteRelation(rel.id, tl.id)}
-                                    className="text-slate-300 hover:text-red-400">
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
-                                  </button>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
+                      {/* Relations subsection — shared with CCA via
+                          the same component (Batch 39P-b2). */}
+                      <RelationsSection
+                        timelineId={tl.id}
+                        timelineName={tl.name}
+                        practices={practiceMap[tl.id] || []}
+                        pipe={{ pipe: 'PG_GLOBAL', parentId: pgId }}
+                      />
                     </div>
                   )}
                 </div>
@@ -496,59 +389,6 @@ export default function GlobalPGDetailPage() {
           </div>
         )}
 
-        {/* Add Relation modal (Batch 39P-b) — simple AND/OR multi-pick. */}
-        {showAddRelation && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-              <div className="p-6 border-b border-slate-100">
-                <h2 className="font-bold text-slate-900">Add Relation</h2>
-                <p className="text-slate-500 text-sm mt-0.5">
-                  Group two or more practices on this timeline. <strong>AND</strong> = all apply together; <strong>OR</strong> = pick any one.
-                </p>
-              </div>
-              <form onSubmit={handleSaveRelation} className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Type</label>
-                  <div className="flex gap-3">
-                    {(['AND', 'OR'] as const).map(t => (
-                      <label key={t} className="flex items-center gap-2 text-sm flex-1 border border-slate-200 rounded-xl px-3 py-2 cursor-pointer hover:bg-slate-50">
-                        <input type="radio" name="relType" checked={relType === t}
-                          onChange={() => setRelType(t)} />
-                        <span>{t}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                    Practices ({relPicked.length} picked)
-                  </label>
-                  <div className="space-y-1.5 max-h-60 overflow-y-auto">
-                    {(practiceMap[showAddRelation] || []).map(p => (
-                      <label key={p.id} className="flex items-center gap-2 text-sm">
-                        <input type="checkbox" checked={relPicked.includes(p.id)}
-                          onChange={() => togglePicked(p.id)} />
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>{p.l0_type}</span>
-                        <span className="text-slate-700">
-                          {[p.l1_type, p.l2_type].filter(Boolean).join(' › ') || <span className="text-slate-400 italic">No sub-type</span>}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                {relationError && <p className="text-sm text-red-600">{relationError}</p>}
-                <div className="flex gap-3 pt-2">
-                  <button type="button" onClick={() => setShowAddRelation(null)}
-                    className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm">Cancel</button>
-                  <button type="submit" disabled={savingRelation || relPicked.length < 2}
-                    className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
-                    {savingRelation ? 'Saving…' : 'Save Relation'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
       </div>
     </AdminLayout>
   )
