@@ -1,17 +1,68 @@
 'use client'
+
+// Batch 39P-a (2026-05-16) — SA-portal Global PG detail page base.
+//
+// Header rewritten to show PG name + bundle + status (was raw
+// cosh_id + non-existent application_type). Timelines + practices
+// read through the new `/advisory/global/pg-recommendations/{id}/
+// timelines` endpoint which mirrors the CA-side shape and returns
+// practices nested per timeline in one round-trip.
+//
+// Practice authoring is intentionally still bare-bones in this
+// batch; cascading L0/L1/L2 + element form + relations + CQs land
+// in 39P-b/c/d (port from CCA's authoring depth — backend tables
+// already shared after Batch 39O UCAT unification).
+
 import { useEffect, useState, FormEvent } from 'react'
+import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
 
-interface PGRec { id: string; problem_group_cosh_id: string; application_type: string; status: string; version: number }
-interface PGTimeline { id: string; pg_recommendation_id: string; name: string; from_type: string; from_value: number; to_value: number }
-interface PGPractice { id: string; l0_type: string; l1_type: string | null; l2_type: string | null; display_order: number; is_special_input: boolean }
+interface PGRec {
+  id: string
+  problem_group_cosh_id: string
+  area_or_plant: string | null
+  status: string
+  version: number
+}
+
+interface ProblemGroup { cosh_id: string; name_en: string }
+
+interface PGPractice {
+  id: string
+  l0_type: string
+  l1_type: string | null
+  l2_type: string | null
+  display_order: number
+  is_special_input: boolean
+}
+
+interface PGTimeline {
+  id: string
+  pg_recommendation_id: string
+  name: string
+  from_type: string
+  from_value: number
+  to_value: number
+  practices?: PGPractice[]
+}
 
 const L0_COLOUR: Record<string, string> = {
   INPUT: 'bg-blue-100 text-blue-700', NON_INPUT: 'bg-purple-100 text-purple-700',
   INSTRUCTION: 'bg-amber-100 text-amber-700', MEDIA: 'bg-pink-100 text-pink-700',
+}
+
+const STATUS_COLOUR: Record<string, string> = {
+  DRAFT: 'bg-amber-100 text-amber-700',
+  ACTIVE: 'bg-green-100 text-green-700',
+  INACTIVE: 'bg-slate-100 text-slate-500',
+}
+
+const AREA_PLANT_LABEL: Record<string, string> = {
+  AREA_WISE: 'Area-wise',
+  PLANT_WISE: 'Plant-wise',
 }
 
 export default function GlobalPGDetailPage() {
@@ -19,10 +70,12 @@ export default function GlobalPGDetailPage() {
   const router = useRouter()
 
   const [pg, setPg] = useState<PGRec | null>(null)
+  const [pgName, setPgName] = useState('')
   const [timelines, setTimelines] = useState<PGTimeline[]>([])
   const [practiceMap, setPracticeMap] = useState<Record<string, PGPractice[]>>({})
   const [expanded, setExpanded] = useState<string | null>(null)
   const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState('')
 
   const [showAddTL, setShowAddTL] = useState(false)
   const [addingTL, setAddingTL] = useState(false)
@@ -35,51 +88,58 @@ export default function GlobalPGDetailPage() {
   const [practiceForm, setPracticeForm] = useState({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
 
   const loadTimelines = async () => {
-    try {
-      const { data } = await api.get<PGTimeline[]>(`/advisory/global/pg-recommendations/${pgId}/timelines-list`)
-      setTimelines(data)
-    } catch {
-      setTimelines([])
+    const { data } = await api.get<PGTimeline[]>(
+      `/advisory/global/pg-recommendations/${pgId}/timelines`,
+    ).catch(() => ({ data: [] as PGTimeline[] }))
+    setTimelines(data)
+    const map: Record<string, PGPractice[]> = {}
+    for (const tl of data) {
+      if (tl.practices) map[tl.id] = tl.practices
     }
+    setPracticeMap(map)
   }
 
   useEffect(() => {
+    if (!pgId) return
     api.get<PGRec>(`/advisory/global/pg-recommendations/${pgId}`)
       .then(r => setPg(r.data))
       .catch(() => router.replace('/cha/global'))
-
-    // load timelines inline
-    api.get(`/advisory/global/pg-recommendations/${pgId}`).then(async () => {
-      // fetch timelines via a simple ad-hoc call
-    })
+    loadTimelines()
+    // Resolve PG display name from the catalogue so the header isn't
+    // a raw cosh_id.
+    api.get<ProblemGroup[]>('/advisory/global/problem-groups')
+      .then(r => {
+        const match = r.data.find(p => p.cosh_id === pg?.problem_group_cosh_id)
+        if (match) setPgName(match.name_en)
+      })
+      .catch(() => {})
   }, [pgId])
 
-  const loadTL = async () => {
-    // Use client PG timelines route as a workaround since global shares the same PGTimeline table
-    const { data } = await api.get<PGTimeline[]>(`/advisory/global/pg-recommendations/${pgId}/timelines`)
-      .catch(async () => ({ data: [] as PGTimeline[] }))
-    setTimelines(data)
-  }
-
-  useEffect(() => { if (pgId) loadTL() }, [pgId])
-
-  const loadPractices = async (tlId: string) => {
-    const res = await api.get<PGPractice[]>(`/advisory/global/pg-timelines/${tlId}/practices`)
-      .catch(() => ({ data: [] as PGPractice[] }))
-    setPracticeMap(m => ({ ...m, [tlId]: res.data }))
-  }
+  // Re-resolve PG name when the recommendation row loads (the catalogue
+  // fetch may complete first or second).
+  useEffect(() => {
+    if (!pg?.problem_group_cosh_id || pgName) return
+    api.get<ProblemGroup[]>('/advisory/global/problem-groups')
+      .then(r => {
+        const match = r.data.find(p => p.cosh_id === pg.problem_group_cosh_id)
+        if (match) setPgName(match.name_en)
+      })
+      .catch(() => {})
+  }, [pg?.problem_group_cosh_id])
 
   const toggle = (id: string) => {
-    if (expanded === id) { setExpanded(null); return }
-    setExpanded(id)
-    if (!practiceMap[id]) loadPractices(id)
+    setExpanded(prev => prev === id ? null : id)
   }
 
   async function handlePublish() {
-    setPublishing(true)
+    setPublishing(true); setPublishError('')
     try {
-      const { data } = await api.post<PGRec>(`/advisory/global/pg-recommendations/${pgId}/publish`)
+      const { data } = await api.post<PGRec>(
+        `/advisory/global/pg-recommendations/${pgId}/publish`,
+      )
       setPg(data)
+    } catch (err: unknown) {
+      setPublishError(extractErrorMessage(err, 'Failed to publish.'))
     } finally { setPublishing(false) }
   }
 
@@ -87,14 +147,14 @@ export default function GlobalPGDetailPage() {
     e.preventDefault()
     setAddingTL(true); setTlError('')
     try {
-      const { data } = await api.post<PGTimeline>(
+      await api.post(
         `/advisory/global/pg-recommendations/${pgId}/timelines`, {
           name: tlForm.name, from_type: tlForm.from_type,
           from_value: parseInt(tlForm.from_value), to_value: parseInt(tlForm.to_value),
         })
       setShowAddTL(false)
       setTlForm({ name: '', from_type: 'DAYS_AFTER_DETECTION', from_value: '0', to_value: '7' })
-      setTimelines(tls => [...tls, data])
+      await loadTimelines()
     } catch (err: unknown) {
       setTlError(extractErrorMessage(err, 'Failed to add timeline.'))
     } finally { setAddingTL(false) }
@@ -112,7 +172,7 @@ export default function GlobalPGDetailPage() {
       })
       setShowAddPractice(null)
       setPracticeForm({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
-      loadPractices(showAddPractice)
+      await loadTimelines()
     } catch (err: unknown) {
       setPracticeError(extractErrorMessage(err, 'Failed to add practice.'))
     } finally { setAddingPractice(false) }
@@ -121,7 +181,7 @@ export default function GlobalPGDetailPage() {
   async function deleteTL(tl: PGTimeline) {
     if (!confirm(`Delete timeline "${tl.name}"?`)) return
     await api.delete(`/advisory/global/pg-recommendations/${pgId}/timelines/${tl.id}`)
-    setTimelines(tls => tls.filter(t => t.id !== tl.id))
+    await loadTimelines()
   }
 
   if (!pg) return <AdminLayout><div className="pt-20 text-center text-slate-400">Loading…</div></AdminLayout>
@@ -129,19 +189,30 @@ export default function GlobalPGDetailPage() {
   return (
     <AdminLayout>
       <div className="max-w-4xl space-y-6">
+        <div>
+          <Link href="/cha/global" className="text-xs text-slate-500 hover:text-slate-700">
+            ← Back to CHA Library
+          </Link>
+        </div>
         <div className="flex items-start gap-4">
-          <button onClick={() => router.back()} className="mt-1 text-slate-400 hover:text-slate-600">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
           <div className="flex-1">
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-2xl font-bold text-slate-900 font-mono">{pg.problem_group_cosh_id}</h1>
+              <h1 className="text-2xl font-bold text-slate-900">
+                {pgName || pg.problem_group_cosh_id}
+              </h1>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">GLOBAL PG</span>
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${pg.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : pg.status === 'DRAFT' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>{pg.status}</span>
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLOUR[pg.status] || 'bg-slate-100 text-slate-600'}`}>
+                {pg.status}
+              </span>
             </div>
-            <p className="text-slate-500 text-sm mt-1">Application: {pg.application_type} · v{pg.version}</p>
+            <p className="text-slate-500 text-sm mt-1">
+              {AREA_PLANT_LABEL[pg.area_or_plant || ''] || '—'} · v{pg.version}
+            </p>
+            {!pgName && (
+              <p className="text-[11px] font-mono text-slate-400 mt-0.5">
+                {pg.problem_group_cosh_id}
+              </p>
+            )}
           </div>
           {pg.status === 'DRAFT' && (
             <button onClick={handlePublish} disabled={publishing}
@@ -151,8 +222,10 @@ export default function GlobalPGDetailPage() {
           )}
         </div>
 
+        {publishError && <p className="text-sm text-red-600">{publishError}</p>}
+
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-          <strong>Global protocol</strong> — Clients import and customise this. Changes here do not affect existing client copies.
+          <strong>Global PG recommendation</strong> — Clients import and customise this for their crops + districts. Practice authoring depth (Brand Lock, cascading L0/L1/L2, element form, Relations, Conditional Questions) lands in later batches.
         </div>
 
         {/* Timelines */}
