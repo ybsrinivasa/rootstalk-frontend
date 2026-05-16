@@ -26,6 +26,7 @@ interface PracticeElement {
 interface Practice {
   id: string; l0_type: string; l1_type: string | null; l2_type: string | null
   display_order: number; is_special_input: boolean
+  is_brand_locked?: boolean  // Batch 39I-a — SE opts in per Practice
   elements?: PracticeElement[]  // Batch 32 — server resolves labels + display values
 }
 // Batch 39A's GET endpoint returns each Relation with its 3-D parts
@@ -267,7 +268,12 @@ export default function GlobalPackageDetailPage() {
   const [addingPractice, setAddingPractice] = useState(false)
   const [practiceError, setPracticeError] = useState('')
   const [practiceForm, setPracticeForm] = useState({
-    l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false,
+    l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0',
+    is_special_input: false,
+    // Batch 39I-a — SE opts in to Lock Brand per Practice. Checkbox
+    // is disabled in the modal until a Trade Name (BRAND_NAME) is
+    // picked. Auto-clears when BRAND_NAME is wiped.
+    is_brand_locked: false,
   })
   // Batch 33: when set, the Practice modal opens in EDIT mode pre-
   // filled with this Practice's current values; Submit issues PUT
@@ -1540,6 +1546,7 @@ export default function GlobalPackageDetailPage() {
       l2_type: p.l2_type || '',
       display_order: String(p.display_order),
       is_special_input: p.is_special_input,
+      is_brand_locked: !!p.is_brand_locked,
     })
     setShowAddPractice(timelineId)
   }
@@ -1584,12 +1591,20 @@ export default function GlobalPackageDetailPage() {
       if (!Number.isNaN(parsed)) frequency_days = parsed
     }
 
+    // Batch 39I-a — only send is_brand_locked=true when a BRAND_NAME
+    // element is actually included. Defensive: backend rejects the
+    // mismatch with brand_lock_requires_brand_name, but clearing
+    // client-side avoids the round-trip in the common case.
+    const hasBrandElement = elements.some(
+      el => el.element_type === 'BRAND_NAME' && (el.cosh_ref || '').trim(),
+    )
     const body = {
       l0_type: practiceForm.l0_type,
       l1_type: practiceForm.l1_type || null,
       l2_type: practiceForm.l2_type || null,
       display_order: parseInt(practiceForm.display_order),
       is_special_input: practiceForm.is_special_input,
+      is_brand_locked: practiceForm.is_brand_locked && hasBrandElement,
       frequency_days,
       elements,
     }
@@ -1609,7 +1624,7 @@ export default function GlobalPackageDetailPage() {
       const tlId = showAddPractice  // capture before reset
       setShowAddPractice(null)
       setEditingPractice(null)
-      setPracticeForm({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false })
+      setPracticeForm({ l0_type: 'INPUT', l1_type: '', l2_type: '', display_order: '0', is_special_input: false, is_brand_locked: false })
       setL2Spec([]); setElementValues({})
       loadPractices(tlId)
     } catch (err: unknown) {
@@ -1995,6 +2010,7 @@ export default function GlobalPackageDetailPage() {
                                     {p.l2_type ? practiceShortLabel(p) : <span className="text-slate-400 italic">No sub-type</span>}
                                   </span>
                                   {p.is_special_input && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">special</span>}
+                                  {p.is_brand_locked && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full" title="Locked brand — orders route to onboarded dealers only">🔒 locked</span>}
                                   <span className="text-[11px] text-slate-400">
                                     {hasElements ? `${p.elements!.length} element${p.elements!.length === 1 ? '' : 's'}` : 'no elements'}
                                   </span>
@@ -2596,6 +2612,33 @@ export default function GlobalPackageDetailPage() {
                     Special input (adjuvant — never suppressed by BL-03)
                   </label>
                 )}
+                {/* Batch 39I-a — Lock Brand. Disabled until BRAND_NAME
+                    has a value; auto-clears if the SE wipes the brand.
+                    Only renders for L2s that carry a BRAND_NAME field
+                    (i.e. the input brand cascade is in the rule book). */}
+                {l2Spec.some(f => f.name === 'BRAND_NAME') && (() => {
+                  const hasBrand = !!(elementValues['BRAND_NAME'] || '').trim()
+                  const lockChecked = hasBrand && practiceForm.is_brand_locked
+                  // Auto-uncheck if BRAND_NAME just cleared.
+                  if (!hasBrand && practiceForm.is_brand_locked) {
+                    queueMicrotask(() => setPracticeForm(f => ({ ...f, is_brand_locked: false })))
+                  }
+                  return (
+                    <label className={`flex items-center gap-2 text-sm ${hasBrand ? 'cursor-pointer text-slate-700' : 'cursor-not-allowed text-slate-400'}`}>
+                      <input type="checkbox"
+                        checked={lockChecked}
+                        disabled={!hasBrand}
+                        onChange={e => setPracticeForm(f => ({ ...f, is_brand_locked: e.target.checked }))}
+                        className="w-4 h-4 rounded" />
+                      Lock Brand
+                      {hasBrand ? (
+                        <span className="text-[11px] text-slate-400">— locks this Trade Name; orders route to the company's onboarded dealers only</span>
+                      ) : (
+                        <span className="text-[11px] text-slate-400">— pick a Trade Name first to enable</span>
+                      )}
+                    </label>
+                  )
+                })()}
                 {practiceError && <p className="text-sm text-red-600">{practiceError}</p>}
                 <div className="flex gap-3 pt-2">
                   <button type="button" onClick={() => { setShowAddPractice(null); setEditingPractice(null); setPracticeError('') }}
