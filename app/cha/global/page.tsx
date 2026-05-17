@@ -11,6 +11,7 @@
 
 import { useEffect, useState, FormEvent } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
@@ -48,6 +49,7 @@ const AREA_PLANT_LABEL: Record<string, string> = {
 }
 
 export default function GlobalCHAPage() {
+  const router = useRouter()
   const [recs, setRecs] = useState<PGRec[]>([])
   const [problemGroups, setProblemGroups] = useState<ProblemGroup[]>([])
   const [cropsByPg, setCropsByPg] = useState<Record<string, CropItem[]>>({})
@@ -61,7 +63,10 @@ export default function GlobalCHAPage() {
   }>({ problem_group_cosh_id: '', area_or_plant: 'AREA_WISE' })
 
   const load = () => {
-    api.get<PGRec[]>('/advisory/global/pg-recommendations')
+    // SA/CM admin view — show DRAFT + ACTIVE + INACTIVE rows.
+    // The default ACTIVE-only filter is for the CA-portal SE
+    // Import flow; here we need to see drafts being authored.
+    api.get<PGRec[]>('/advisory/global/pg-recommendations?include_drafts=true')
       .then(r => setRecs(r.data))
       .finally(() => setLoading(false))
   }
@@ -99,13 +104,23 @@ export default function GlobalCHAPage() {
     e.preventDefault()
     setCreating(true); setError('')
     try {
-      await api.post('/advisory/global/pg-recommendations', {
-        problem_group_cosh_id: form.problem_group_cosh_id,
-        area_or_plant: form.area_or_plant,
-      })
+      const { data: created } = await api.post<PGRec>(
+        '/advisory/global/pg-recommendations',
+        {
+          problem_group_cosh_id: form.problem_group_cosh_id,
+          area_or_plant: form.area_or_plant,
+        },
+      )
       setShowCreate(false)
       setForm({ problem_group_cosh_id: '', area_or_plant: 'AREA_WISE' })
-      load()
+      // Land the CM on the new PG's editor so the "what next?" is
+      // obvious (add timelines). Falls back to a list refresh if the
+      // POST response is missing an id for any reason.
+      if (created?.id) {
+        router.push(`/cha/global/${created.id}`)
+      } else {
+        load()
+      }
     } catch (err: unknown) {
       setError(extractErrorMessage(err, 'Failed to create.'))
     } finally { setCreating(false) }
