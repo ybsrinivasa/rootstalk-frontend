@@ -106,12 +106,13 @@ const ALL_NAV: NavItem[] = [
   { href: '/languages',            label: 'Languages',          Icon: IconGlobe,      roles: ['SA'],              group: 'PLATFORM' },
   { href: '/sync',                 label: 'Sync Log',           Icon: IconRefresh,    roles: ['SA'],              group: 'PLATFORM' },
   { href: '/cosh-crops',           label: 'Cosh Crops',         Icon: IconLeaf,       roles: ['SA', 'CM'],        group: 'PLATFORM' },
-  // Platform-level eligibility gate, NOT Global CHA content (PG has
-  // no crop dimension). Drives (a) diagnosis eligibility in the PWA
-  // and (b) the ClientCrop ∩ CropHealthCrop intersection for CA-side
-  // SP authoring. Moved from CONTENT → PLATFORM on 2026-05-17 to
-  // stop SAs mistaking it for "the crop list for my Global CHA library".
-  { href: '/crop-health-crops',    label: 'Diagnosis & SP Crops', Icon: IconLeaf,     roles: ['SA', 'CM'],        group: 'PLATFORM' },
+  // Platform-level eligibility gate. CM-managed list of crops that
+  // are crop-health-ready on the platform. Drives diagnosis in the
+  // PWA and downstream CA-portal crop-health workflows. Label kept
+  // neutral on 2026-05-17 — earlier "Diagnosis & SP Crops" exposed
+  // SP (a CA-Portal-only concept) on the CM's sidebar, which
+  // violated the no-cross-portal-overlap rule.
+  { href: '/crop-health-crops',    label: 'Crop Health Crops',  Icon: IconLeaf,       roles: ['SA', 'CM'],        group: 'PLATFORM' },
   // CONTENT — CCA navigation enforces the Crops → Packages → Timelines →
   // Practices hierarchy. SE enters at Crops, picks a crop, drills into
   // its packages, then into timelines and practices via the package
