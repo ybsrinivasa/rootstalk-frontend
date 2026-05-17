@@ -12,6 +12,7 @@ import {
 } from '@/components/advisory-authoring/LineageSection'
 import { PracticeFormModal, type ExistingPractice } from '@/components/advisory-authoring/PracticeFormModal'
 import api from '@/lib/api'
+import { practiceShortLabel } from '@/lib/practice-label'
 
 interface Package {
   id: string; name: string; crop_cosh_id: string
@@ -377,57 +378,10 @@ export default function GlobalPackageDetailPage() {
   }
   // ── Batch 39C-rev2: linear chain helpers ──────────────────────────────────
 
-  // Practice label preferred for Relations: L2 + Common Name + Trade
-  // Name. Falls back to the L0 token when nothing else is available.
-  function humanize(s: string): string {
-    return s.toLowerCase().split('_').map(w => (w[0]?.toUpperCase() || '') + w.slice(1)).join(' ')
-  }
-  function practiceLabel(p: Practice): string {
-    const tokens: string[] = []
-    if (p.l2_type) tokens.push(humanize(p.l2_type))
-    const cn = p.elements?.find(e => e.element_type === 'COMMON_NAME')
-    if (cn?.display_value) tokens.push(cn.display_value)
-    const bn = p.elements?.find(e => e.element_type === 'BRAND_NAME')
-    if (bn?.display_value) tokens.push(bn.display_value)
-    return tokens.length > 0 ? tokens.join(' • ') : p.l0_type
-  }
-  // Batch 39H (2026-05-15) — distinguishing label for the practice
-  // row in the Timeline expansion. Each L0 surfaces its most
-  // identity-bearing attribute so two practices of the same L2 look
-  // different at a glance:
-  //   INPUT       → L2 • Common Name • Trade Name (practiceLabel)
-  //   INSTRUCTION → L2 • TITLE
-  //   MEDIA       → L2 • TITLE
-  //   NON_INPUT   → L2 • first non-INSTRUCTIONS element value
-  //                 (with adjacent unit appended when the next
-  //                 element is a *_UNIT field)
-  function practiceShortLabel(p: Practice): string {
-    if (!p.l2_type) return 'No sub-type'
-    const l2Human = humanize(p.l2_type)
-    if (p.l0_type === 'INPUT') return practiceLabel(p)
-    if (p.l0_type === 'INSTRUCTION' || p.l0_type === 'MEDIA') {
-      const title = p.elements?.find(e => e.element_type === 'TITLE')
-      const t = title?.display_value || title?.value
-      return t ? `${l2Human} • ${t}` : l2Human
-    }
-    // NON_INPUT: walk elements in display order; pick the first
-    // non-INSTRUCTIONS field that has a value. If the next element
-    // is its matching *_UNIT, append it for context.
-    const els = p.elements || []
-    for (let i = 0; i < els.length; i++) {
-      const e = els[i]
-      if (e.element_type === 'INSTRUCTIONS') continue
-      const v = e.display_value || e.value
-      if (!v) continue
-      const next = els[i + 1]
-      if (next && next.element_type.endsWith('_UNIT')) {
-        const u = next.display_value || next.value
-        if (u) return `${l2Human} • ${v} ${u}`
-      }
-      return `${l2Human} • ${v}`
-    }
-    return l2Human
-  }
+  // Practice label helpers — extracted to lib/practice-label.ts on
+  // 2026-05-17 so the SA-portal PG editor (and future UCAT-pipe
+  // surfaces) share the same formatting. See that module for per-L0
+  // rules.
   // Practices already inside ANY relation on this timeline — disabled in
   // the picker (backend rejects double-membership anyway).
   function practiceIdsInAnyRelation(tlId: string): Set<string> {

@@ -26,6 +26,7 @@ import {
 } from '@/components/advisory-authoring/LineageSection'
 import { PracticeFormModal, type ExistingPractice } from '@/components/advisory-authoring/PracticeFormModal'
 import api from '@/lib/api'
+import { practiceShortLabel } from '@/lib/practice-label'
 import { extractErrorMessage } from '@/lib/errors'
 
 interface PGRec {
@@ -488,7 +489,7 @@ export default function GlobalPGDetailPage() {
                                 className="flex items-center gap-3 py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded"
                                 onClick={() => setExpandedPractice(isPExpanded ? null : p.id)}>
                                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${L0_COLOUR[p.l0_type] || 'bg-slate-100'}`}>{p.l0_type}</span>
-                                <span className="text-sm text-slate-700 flex-1 min-w-0 truncate">{[p.l1_type, p.l2_type].filter(Boolean).join(' › ') || <span className="text-slate-400 italic">No sub-type</span>}</span>
+                                <span className="text-sm text-slate-700 flex-1 min-w-0 truncate">{p.l2_type ? practiceShortLabel(p) : <span className="text-slate-400 italic">No sub-type</span>}</span>
                                 {p.is_special_input && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">special</span>}
                                 {p.is_brand_locked && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full" title="Locked brand">🔒 locked</span>}
                                 <span className="text-[11px] text-slate-400">
