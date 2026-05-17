@@ -233,15 +233,23 @@ export function PracticeFormModal({
   const currentL1 = currentL0?.l1.find(l1 => l1.id === practiceForm.l1_type)
 
   // Per-L2 spec fetch.
+  //
+  // crop_cosh_id is optional on the backend (only affects whether
+  // plant-wise extras like VOLUME_PER_PLANT are appended). The
+  // SA-portal PG editor passes cropCoshId='' because PG isn't
+  // crop-bound; without this fetch, the element form never renders
+  // and Add Practice fails server-side with MISSING_MANDATORY.
   useEffect(() => {
-    if (!practiceForm.l2_type || !cropCoshId) {
+    if (!practiceForm.l2_type) {
       setL2Spec([]); setElementValues({}); setOptionsByField({})
       setL2Meta({ is_special_input: false, frequency_based: false })
       return
     }
-    const qs = new URLSearchParams({ crop_cosh_id: cropCoshId })
+    const qs = new URLSearchParams()
+    if (cropCoshId) qs.set('crop_cosh_id', cropCoshId)
+    const suffix = qs.toString() ? `?${qs}` : ''
     api.get<{ elements: L2ElementField[]; is_special_input?: boolean; frequency_based?: boolean }>(
-      `/practice-taxonomy/elements/${encodeURIComponent(practiceForm.l2_type)}?${qs}`,
+      `/practice-taxonomy/elements/${encodeURIComponent(practiceForm.l2_type)}${suffix}`,
     )
       .then(r => {
         setL2Spec(r.data.elements)
