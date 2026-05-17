@@ -47,14 +47,19 @@ export default function CropHealthCropsPage() {
   return (
     <AdminLayout>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Crop Health Crops</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Diagnosis &amp; SP Crops</h1>
         <p className="text-slate-500 text-sm mt-0.5">
-          Crops for which CHA diagnosis and global recommendations are ready in RootsTalk
+          Platform-level eligibility list. A crop must be enabled here to power two downstream flows:
         </p>
-        <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+        <ul className="text-slate-600 text-sm mt-2 ml-1 space-y-1">
+          <li>• <strong>Diagnosis</strong> in the farmer PWA — farmers can only run diagnosis on crops enabled here.</li>
+          <li>• <strong>CHA-SP authoring</strong> in CA portals — SEs can only author Specific-Problem recommendations against crops in the intersection of their company&apos;s belt and this list.</li>
+        </ul>
+        <div className="mt-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
           <p className="text-xs text-blue-700">
-            <strong>Privilege required:</strong> Crop Health Crops — only CMs with this privilege can make changes here.
-            These crops are enabled for the diagnosis flow in the farmer PWA.
+            <strong>Not for Global CHA content.</strong> The Global CHA Library is Problem-Group-keyed and crop-agnostic — nothing on this page changes what authors see there.
+            <br />
+            <strong>Privilege required:</strong> only CMs with the Crop Health Crops privilege can make changes here.
           </p>
         </div>
       </div>
@@ -115,7 +120,7 @@ export default function CropHealthCropsPage() {
           )}
           {crops.length === 0 && (
             <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
-              <p className="text-slate-400">No crops added yet. Enter a Cosh crop ID above to enable diagnosis for that crop.</p>
+              <p className="text-slate-400">No crops added yet. Enter a Cosh crop ID above to enable diagnosis and CHA-SP authoring for that crop.</p>
             </div>
           )}
         </div>

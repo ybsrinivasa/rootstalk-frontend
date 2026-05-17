@@ -106,6 +106,12 @@ const ALL_NAV: NavItem[] = [
   { href: '/languages',            label: 'Languages',          Icon: IconGlobe,      roles: ['SA'],              group: 'PLATFORM' },
   { href: '/sync',                 label: 'Sync Log',           Icon: IconRefresh,    roles: ['SA'],              group: 'PLATFORM' },
   { href: '/cosh-crops',           label: 'Cosh Crops',         Icon: IconLeaf,       roles: ['SA', 'CM'],        group: 'PLATFORM' },
+  // Platform-level eligibility gate, NOT Global CHA content (PG has
+  // no crop dimension). Drives (a) diagnosis eligibility in the PWA
+  // and (b) the ClientCrop ∩ CropHealthCrop intersection for CA-side
+  // SP authoring. Moved from CONTENT → PLATFORM on 2026-05-17 to
+  // stop SAs mistaking it for "the crop list for my Global CHA library".
+  { href: '/crop-health-crops',    label: 'Diagnosis & SP Crops', Icon: IconLeaf,     roles: ['SA', 'CM'],        group: 'PLATFORM' },
   // CONTENT — CCA navigation enforces the Crops → Packages → Timelines →
   // Practices hierarchy. SE enters at Crops, picks a crop, drills into
   // its packages, then into timelines and practices via the package
@@ -113,7 +119,6 @@ const ALL_NAV: NavItem[] = [
   // (2026-05-14, per user) to prevent skipping levels.
   { href: '/advisory/global/crops',     label: 'CCA · Crops',      Icon: IconBook, roles: ['SA', 'CM'], group: 'CONTENT' },
   { href: '/cha/global',           label: 'Global CHA Library', Icon: IconBeaker,     roles: ['SA', 'CM'],        group: 'CONTENT' },
-  { href: '/crop-health-crops',    label: 'Crop Health',        Icon: IconLeaf,       roles: ['SA', 'CM'],        group: 'CONTENT' },
   { href: '/brand-handling',       label: 'Brand Handling',     Icon: IconTag,        roles: ['SA', 'CM'],        group: 'CONTENT' },
   { href: '/volume-calculations',  label: 'Volume Formulas',    Icon: IconBeaker,     roles: ['SA', 'CM'],        group: 'CONTENT' },
   // MY WORK
