@@ -179,6 +179,29 @@ export default function GlobalPackageDetailPage() {
   const [publishError, setPublishError] = useState('')
   const [publishBlockers, setPublishBlockers] = useState<{ code: string; message: string }[]>([])
 
+  // Batch 39R (2026-05-17) — Global Package ACTIVE ↔ INACTIVE toggle.
+  // Endpoint (PUT /advisory/global/packages/{pkg_id}) has existed since
+  // Batch 28; this exposes it on the SA-portal UI for the first time.
+  const [togglingPkg, setTogglingPkg] = useState(false)
+
+  async function togglePkgStatus(next: 'ACTIVE' | 'INACTIVE') {
+    if (!pkg) return
+    if (!confirm(
+      next === 'INACTIVE'
+        ? 'Mark this Global Package Inactive? Clients will stop seeing it as available to pull, but existing imports stay live.'
+        : 'Reactivate this Global Package? It will surface again on the import list.'
+    )) return
+    setTogglingPkg(true)
+    try {
+      const { data } = await api.put(`/advisory/global/packages/${id}`, { status: next })
+      setPkg(data)
+    } catch (err: unknown) {
+      alert(extractErrorMessage(err, 'Failed to update status.'))
+    } finally {
+      setTogglingPkg(false)
+    }
+  }
+
   // Batch 39L-b (2026-05-16) — lineage state. Surfaces an existing
   // DRAFT in the same lineage so the read-only banner offers a
   // "Continue" link rather than a fresh clone every time.
@@ -898,6 +921,18 @@ export default function GlobalPackageDetailPage() {
               }} disabled={publishing}
                 className="bg-blue-600 text-white text-sm font-semibold px-4 py-2.5 rounded-xl disabled:opacity-50">
                 ✓ Publish…
+              </button>
+            )}
+            {pkg.status === 'ACTIVE' && (
+              <button onClick={() => togglePkgStatus('INACTIVE')} disabled={togglingPkg}
+                className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50 disabled:opacity-50">
+                {togglingPkg ? 'Saving…' : '⊘ Mark Inactive'}
+              </button>
+            )}
+            {pkg.status === 'INACTIVE' && (
+              <button onClick={() => togglePkgStatus('ACTIVE')} disabled={togglingPkg}
+                className="border border-green-300 text-green-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-green-50 disabled:opacity-50">
+                {togglingPkg ? 'Saving…' : '↺ Reactivate'}
               </button>
             )}
             <Link href={`/advisory/global/${id}/preview`}

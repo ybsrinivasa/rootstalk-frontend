@@ -54,6 +54,7 @@ interface PGTimeline {
   from_type: string
   from_value: number
   to_value: number
+  status?: 'ACTIVE' | 'INACTIVE'
   practices?: PGPractice[]
 }
 
@@ -113,6 +114,48 @@ export default function GlobalPGDetailPage() {
   const [cloning, setCloning] = useState(false)
   const [cloneError, setCloneError] = useState('')
   const [makingEditable, setMakingEditable] = useState<string | null>(null)
+
+  // Batch 39R (2026-05-17) — PG + Timeline ACTIVE ↔ INACTIVE toggle.
+  const [togglingPg, setTogglingPg] = useState(false)
+  const [togglingTl, setTogglingTl] = useState<string | null>(null)
+
+  async function togglePgStatus(next: 'ACTIVE' | 'INACTIVE') {
+    if (!pg) return
+    if (!confirm(
+      next === 'INACTIVE'
+        ? 'Mark this Global PG recommendation Inactive? Clients will stop seeing it as available to pull, but existing imports stay live.'
+        : 'Reactivate this Global PG recommendation? It will surface again on the import list.'
+    )) return
+    setTogglingPg(true)
+    try {
+      const { data } = await api.put(
+        `/advisory/global/pg-recommendations/${pgId}`, { status: next },
+      )
+      setPg(data)
+      api.get<LineageRow[]>(`/advisory/global/pg-recommendations/${pgId}/lineage`)
+        .then(r => setLineage(r.data))
+        .catch(() => {})
+    } catch (err: unknown) {
+      alert(extractErrorMessage(err, 'Failed to update status.'))
+    } finally {
+      setTogglingPg(false)
+    }
+  }
+
+  async function toggleTimelineStatus(tl: PGTimeline, next: 'ACTIVE' | 'INACTIVE') {
+    setTogglingTl(tl.id)
+    try {
+      await api.put(
+        `/advisory/global/pg-recommendations/${pgId}/timelines/${tl.id}`,
+        { status: next },
+      )
+      await loadTimelines()
+    } catch (err: unknown) {
+      alert(extractErrorMessage(err, 'Failed to update timeline status.'))
+    } finally {
+      setTogglingTl(null)
+    }
+  }
 
   const loadTimelines = async () => {
     const { data } = await api.get<PGTimeline[]>(
@@ -320,6 +363,18 @@ export default function GlobalPGDetailPage() {
                 ✓ Publish
               </button>
             )}
+            {pg.status === 'ACTIVE' && (
+              <button onClick={() => togglePgStatus('INACTIVE')} disabled={togglingPg}
+                className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50 disabled:opacity-50">
+                {togglingPg ? 'Saving…' : '⊘ Mark Inactive'}
+              </button>
+            )}
+            {pg.status === 'INACTIVE' && (
+              <button onClick={() => togglePgStatus('ACTIVE')} disabled={togglingPg}
+                className="border border-green-300 text-green-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-green-50 disabled:opacity-50">
+                {togglingPg ? 'Saving…' : '↺ Reactivate'}
+              </button>
+            )}
           </div>
         </div>
 
@@ -346,13 +401,33 @@ export default function GlobalPGDetailPage() {
           ) : (
             <div className="space-y-3">
               {timelines.map(tl => (
-                <div key={tl.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                <div key={tl.id} className={`rounded-2xl border shadow-sm overflow-hidden ${tl.status === 'INACTIVE' ? 'bg-slate-50 border-slate-200' : 'bg-white border-slate-100'}`}>
                   <div className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-slate-50" onClick={() => toggle(tl.id)}>
                     <div className="flex-1">
-                      <p className="font-medium text-slate-800 text-sm">{tl.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className={`font-medium text-sm ${tl.status === 'INACTIVE' ? 'text-slate-500' : 'text-slate-800'}`}>{tl.name}</p>
+                        {tl.status === 'INACTIVE' && (
+                          <span className="text-[10px] font-semibold bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-full">INACTIVE</span>
+                        )}
+                      </div>
                       <p className="text-xs text-slate-400 mt-0.5">{tl.from_type} · Day {tl.from_value} → {tl.to_value}</p>
                     </div>
-                    <button onClick={e => { e.stopPropagation(); deleteTL(tl) }} className="text-slate-300 hover:text-red-400 p-1">
+                    {tl.status === 'INACTIVE' ? (
+                      <button
+                        onClick={e => { e.stopPropagation(); toggleTimelineStatus(tl, 'ACTIVE') }}
+                        disabled={togglingTl === tl.id}
+                        className="text-[11px] font-medium text-green-700 border border-green-300 px-2 py-1 rounded-lg hover:bg-green-50 disabled:opacity-50"
+                        title="Reactivate this timeline"
+                      >{togglingTl === tl.id ? '…' : '↺ Reactivate'}</button>
+                    ) : (
+                      <button
+                        onClick={e => { e.stopPropagation(); toggleTimelineStatus(tl, 'INACTIVE') }}
+                        disabled={togglingTl === tl.id}
+                        className="text-[11px] font-medium text-slate-500 border border-slate-200 px-2 py-1 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+                        title="Retire this timeline (excluded from farmer advisory; history preserved)"
+                      >{togglingTl === tl.id ? '…' : '⊘ Inactive'}</button>
+                    )}
+                    <button onClick={e => { e.stopPropagation(); deleteTL(tl) }} className="text-slate-300 hover:text-red-400 p-1" title="Delete (cannot undo)">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                       </svg>
