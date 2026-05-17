@@ -134,6 +134,16 @@ export default function GlobalPGDetailPage() {
   const [togglingPg, setTogglingPg] = useState(false)
   const [togglingTl, setTogglingTl] = useState<string | null>(null)
 
+  // 2026-05-17 follow-up — Edit Timeline modal (mirror of SA-CCA).
+  // PG Reference Type is fixed to DAYS_AFTER_DETECTION; the modal
+  // takes Name / From / To / Status only.
+  const [showEditTL, setShowEditTL] = useState<PGTimeline | null>(null)
+  const [editingTL, setEditingTL] = useState(false)
+  const [editTLError, setEditTLError] = useState('')
+  const [editTLForm, setEditTLForm] = useState({
+    name: '', from_value: '0', to_value: '7', status: 'ACTIVE',
+  })
+
   async function togglePgStatus(next: 'ACTIVE' | 'INACTIVE') {
     if (!pg) return
     if (!confirm(
@@ -170,6 +180,47 @@ export default function GlobalPGDetailPage() {
     } finally {
       setTogglingTl(null)
     }
+  }
+
+  function openEditTimeline(tl: PGTimeline) {
+    setEditTLForm({
+      name: tl.name,
+      from_value: String(tl.from_value),
+      to_value: String(tl.to_value),
+      status: tl.status || 'ACTIVE',
+    })
+    setEditTLError('')
+    setShowEditTL(tl)
+  }
+
+  async function handleEditTimeline(e: FormEvent) {
+    e.preventDefault()
+    if (!showEditTL) return
+    setEditTLError('')
+    const fromVal = parseInt(editTLForm.from_value, 10)
+    const toVal = parseInt(editTLForm.to_value, 10)
+    if (Number.isNaN(fromVal) || Number.isNaN(toVal)) {
+      setEditTLError('FROM and TO must be whole numbers.'); return
+    }
+    if (fromVal > toVal) {
+      setEditTLError('FROM must be ≤ TO (the window cannot run backwards).'); return
+    }
+    setEditingTL(true)
+    try {
+      await api.put(
+        `/advisory/global/pg-recommendations/${pgId}/timelines/${showEditTL.id}`,
+        {
+          name: editTLForm.name,
+          from_value: fromVal,
+          to_value: toVal,
+          status: editTLForm.status,
+        },
+      )
+      setShowEditTL(null)
+      await loadTimelines()
+    } catch (err: unknown) {
+      setEditTLError(extractErrorMessage(err, 'Failed to save timeline.'))
+    } finally { setEditingTL(false) }
   }
 
   const loadTimelines = async () => {
@@ -465,6 +516,12 @@ export default function GlobalPGDetailPage() {
                         title="Retire this timeline (excluded from farmer advisory; history preserved)"
                       >{togglingTl === tl.id ? '…' : '⊘ Inactive'}</button>
                     )}
+                    <button onClick={e => { e.stopPropagation(); openEditTimeline(tl) }}
+                      className="text-slate-300 hover:text-blue-500 p-1" title="Edit timeline">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
                     <button onClick={e => { e.stopPropagation(); deleteTL(tl) }} className="text-slate-300 hover:text-red-400 p-1" title="Delete (cannot undo)">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -643,6 +700,78 @@ export default function GlobalPGDetailPage() {
             if (tlId) loadPractices(tlId)
           }}
         />
+
+        {/* Edit Timeline modal (mirror of SA-CCA's). PG Reference
+            Type is fixed to DAYS_AFTER_DETECTION, so the modal
+            takes Name / From / To / Status only. */}
+        {showEditTL && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+              <div className="p-6 border-b border-slate-100">
+                <h2 className="font-bold text-slate-900">Edit Timeline</h2>
+                <p className="text-slate-500 text-sm mt-0.5">
+                  Reference Type: <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">Days After Detection</span>
+                  <span className="ml-2 text-xs text-slate-400">(locked — CHA timelines always anchor on detection)</span>
+                </p>
+              </div>
+              <form onSubmit={handleEditTimeline} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Name</label>
+                  <input value={editTLForm.name}
+                    onChange={e => setEditTLForm(f => ({ ...f, name: e.target.value }))}
+                    required
+                    className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">From (Day)</label>
+                    <input type="number" min="0" value={editTLForm.from_value}
+                      onChange={e => setEditTLForm(f => ({ ...f, from_value: e.target.value }))}
+                      required
+                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">To (Day)</label>
+                    <input type="number" min="0" value={editTLForm.to_value}
+                      onChange={e => setEditTLForm(f => ({ ...f, to_value: e.target.value }))}
+                      required
+                      className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Status</label>
+                  <div className="flex gap-2">
+                    {(['ACTIVE', 'INACTIVE'] as const).map(s => (
+                      <button key={s} type="button"
+                        onClick={() => setEditTLForm(f => ({ ...f, status: s }))}
+                        className={`flex-1 py-2 rounded-xl text-sm font-medium border ${
+                          editTLForm.status === s
+                            ? (s === 'ACTIVE'
+                                ? 'bg-green-50 border-green-300 text-green-700'
+                                : 'bg-slate-100 border-slate-300 text-slate-700')
+                            : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                        }`}>
+                        {s.charAt(0) + s.slice(1).toLowerCase()}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Inactive timelines stay listed with a badge but are excluded from the farmer&apos;s daily advisory.
+                  </p>
+                </div>
+                {editTLError && <p className="text-sm text-red-600">{editTLError}</p>}
+                <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={() => { setShowEditTL(null); setEditTLError('') }}
+                    className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
+                  <button type="submit" disabled={editingTL}
+                    className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
+                    {editingTL ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {showPublishModal && (() => {
           let tlCount = 0, practiceCount = 0, relCount = 0, cqCount = 0
