@@ -14,12 +14,40 @@ export default function MyClientsPage() {
   const router = useRouter()
   const [clients, setClients] = useState<AssignedClient[]>([])
   const [loading, setLoading] = useState(true)
+  const [openingClient, setOpeningClient] = useState<string | null>(null)
+  const [openError, setOpenError] = useState('')
 
   useEffect(() => {
     api.get<AssignedClient[]>('/admin/cm/my-clients')
       .then(r => setClients(r.data))
       .finally(() => setLoading(false))
   }, [])
+
+  async function openClientPortal(c: AssignedClient) {
+    // SSO: hit the login-as endpoint to mint a token bound to the
+    // target client, then open the CA Portal /cm-login route in a
+    // new tab. The token rides in the URL fragment (not the query
+    // string) so it doesn't appear in nginx access logs. Per user
+    // 2026-05-18: "the CM should be directly logged into that
+    // client. He shouldn't be logging in once again."
+    setOpeningClient(c.client_id)
+    setOpenError('')
+    try {
+      const { data } = await api.post<{
+        access_token: string
+        client_short_name: string
+        ca_portal_url: string
+      }>(`/admin/cm/clients/${c.client_id}/login-as`)
+      const url = `${data.ca_portal_url}/cm-login#token=${encodeURIComponent(data.access_token)}&short=${encodeURIComponent(data.client_short_name)}`
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: { message?: string } | string } } })?.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : detail?.message
+      setOpenError(msg || 'Could not open client portal.')
+    } finally {
+      setOpeningClient(null)
+    }
+  }
 
   return (
     <AdminLayout>
@@ -29,6 +57,10 @@ export default function MyClientsPage() {
           Clients where you are the assigned Content Manager
         </p>
       </div>
+
+      {openError && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">{openError}</div>
+      )}
 
       {loading ? (
         <div className="space-y-3">{[1, 2].map(i => <div key={i} className="h-20 bg-gray-100 rounded-xl animate-pulse" />)}</div>
@@ -69,10 +101,11 @@ export default function MyClientsPage() {
                     className="text-xs px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">
                     Details
                   </button>
-                  <a href={c.portal_url} target="_blank" rel="noopener noreferrer"
-                    className="text-xs px-3 py-1.5 bg-green-700 text-white rounded-lg hover:bg-green-800 font-medium">
-                    Open Client Portal ↗
-                  </a>
+                  <button onClick={() => openClientPortal(c)}
+                    disabled={openingClient === c.client_id}
+                    className="text-xs px-3 py-1.5 bg-green-700 text-white rounded-lg hover:bg-green-800 font-medium disabled:opacity-50">
+                    {openingClient === c.client_id ? 'Opening…' : 'Open Client Portal ↗'}
+                  </button>
                 </div>
               </div>
             </div>
