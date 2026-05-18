@@ -1,24 +1,59 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 
-interface CropHealth { crop_cosh_id: string; enabled: boolean; created_at: string }
+// 2026-05-18 redesign — replace the free-text "type a crop ID" box
+// with a toggle list against every Cosh crop. Cosh is the source of
+// truth for what crops exist; the SA / CM just picks which of them
+// are eligible for crop-health features.
+
+interface CoshCrop { cosh_id: string; name_en: string; status: string }
+interface CHCRow { crop_cosh_id: string; status: string; enabled_at: string | null }
+
+interface MergedRow {
+  cosh_id: string
+  name_en: string
+  enabled: boolean
+}
 
 export default function CropHealthCropsPage() {
-  const [crops, setCrops] = useState<CropHealth[]>([])
+  const [cosh, setCosh] = useState<CoshCrop[]>([])
+  const [chc, setChc] = useState<CHCRow[]>([])
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState<string | null>(null)
-  const [newCrop, setNewCrop] = useState('')
-  const [adding, setAdding] = useState(false)
+  const [filter, setFilter] = useState('')
   const [error, setError] = useState('')
 
-  const load = () =>
-    api.get<CropHealth[]>('/admin/crop-health-crops')
-      .then(r => setCrops(r.data))
-      .finally(() => setLoading(false))
+  const load = () => Promise.all([
+    api.get<CoshCrop[]>('/admin/cosh/crops').then(r => setCosh(r.data)),
+    api.get<CHCRow[]>('/admin/crop-health-crops').then(r => setChc(r.data)),
+  ]).finally(() => setLoading(false))
 
   useEffect(() => { load() }, [])
+
+  const merged: MergedRow[] = useMemo(() => {
+    const enabledIds = new Set(
+      chc.filter(c => c.status === 'ACTIVE').map(c => c.crop_cosh_id),
+    )
+    return cosh
+      .map(c => ({
+        cosh_id: c.cosh_id,
+        name_en: c.name_en,
+        enabled: enabledIds.has(c.cosh_id),
+      }))
+      .sort((a, b) => a.name_en.localeCompare(b.name_en))
+  }, [cosh, chc])
+
+  const filtered = useMemo(() => {
+    if (!filter.trim()) return merged
+    const q = filter.toLowerCase()
+    return merged.filter(c =>
+      c.name_en.toLowerCase().includes(q) || c.cosh_id.toLowerCase().includes(q),
+    )
+  }, [merged, filter])
+
+  const enabledCount = merged.filter(c => c.enabled).length
 
   function pickError(e: any, fallback: string): string {
     const detail = e?.response?.data?.detail
@@ -30,49 +65,34 @@ export default function CropHealthCropsPage() {
     return fallback
   }
 
-  async function toggle(crop: CropHealth) {
-    setToggling(crop.crop_cosh_id); setError('')
+  async function toggle(row: MergedRow) {
+    setToggling(row.cosh_id); setError('')
     try {
-      if (crop.enabled) {
-        await api.put(`/admin/crop-health-crops/${crop.crop_cosh_id}/disable`, {})
-      } else {
-        await api.put(`/admin/crop-health-crops/${crop.crop_cosh_id}/enable`, {})
-      }
-      load()
+      const action = row.enabled ? 'disable' : 'enable'
+      await api.put(`/admin/crop-health-crops/${row.cosh_id}/${action}`, {})
+      await load()
     } catch (e: any) {
       setError(pickError(e, 'Failed to update crop.'))
     } finally { setToggling(null) }
   }
-
-  async function addCrop() {
-    if (!newCrop.trim()) return
-    setAdding(true); setError('')
-    try {
-      await api.put(`/admin/crop-health-crops/${newCrop.trim()}/enable`, {})
-      setNewCrop('')
-      load()
-    } catch (e: any) {
-      setError(pickError(e, 'Failed to add crop.'))
-    } finally { setAdding(false) }
-  }
-
-  const enabled = crops.filter(c => c.enabled)
-  const disabled = crops.filter(c => !c.enabled)
 
   return (
     <AdminLayout>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Crop Health Crops</h1>
         <p className="text-slate-500 text-sm mt-0.5">
-          Platform-level eligibility list. A crop has to be enabled here before its crop-health features go live —
-          starting with <strong>diagnosis in the farmer PWA</strong>.
+          Platform-level eligibility list. A crop has to be enabled here
+          before its crop-health features go live — starting with
+          <strong> diagnosis in the farmer PWA</strong>.
         </p>
-        <div className="mt-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
-          <p className="text-xs text-blue-700">
-            <strong>Not for Global CHA content.</strong> The Global CHA Library is Problem-Group-keyed and crop-agnostic — nothing on this page changes what authors see there.
-            <br />
-            <strong>Privilege required:</strong> only CMs with the Crop Health Crops privilege can make changes here.
-          </p>
+        <div className="mt-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-xs text-blue-700">
+          <strong>Not for Global CHA content.</strong> The Global CHA Library
+          is Problem-Group-keyed and crop-agnostic — nothing on this page
+          changes what authors see there.
+          <br />
+          <strong>Privilege required:</strong> only the CM holding the
+          Crop Health Crops responsibility can change toggles here. The SA
+          can always change them.
         </div>
       </div>
 
@@ -82,65 +102,52 @@ export default function CropHealthCropsPage() {
         </div>
       )}
 
-      {/* Add crop */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 mb-5 flex gap-2">
-        <input value={newCrop} onChange={e => setNewCrop(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && addCrop()}
-          placeholder="Crop Cosh ID (e.g. crop_paddy)"
-          className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500/30" />
-        <button onClick={addCrop} disabled={adding || !newCrop.trim()}
-          className="px-4 py-2 bg-green-700 text-white text-sm font-semibold rounded-lg hover:bg-green-800 disabled:opacity-40">
-          {adding ? 'Adding…' : 'Enable'}
-        </button>
+      <div className="flex items-center gap-3 mb-4">
+        <input value={filter} onChange={e => setFilter(e.target.value)}
+          placeholder="Search crops…"
+          className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30" />
+        <p className="text-xs text-slate-500 whitespace-nowrap">
+          {enabledCount} of {merged.length} enabled
+        </p>
       </div>
 
       {loading ? (
-        <div className="space-y-2">{[1, 2, 3].map(i => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
+        <div className="space-y-2">{[1, 2, 3, 4, 5].map(i =>
+          <div key={i} className="h-14 bg-gray-100 rounded-xl animate-pulse" />
+        )}</div>
+      ) : merged.length === 0 ? (
+        <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
+          <p className="text-slate-400">
+            No crops in Cosh yet. Once Cosh classifies crops, they will appear here.
+          </p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
+          <p className="text-slate-400">No crops match the search.</p>
+        </div>
       ) : (
-        <div className="space-y-4">
-          {enabled.length > 0 && (
-            <section>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Enabled ({enabled.length})</p>
-              <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-50">
-                {enabled.map(c => (
-                  <div key={c.crop_cosh_id} className="flex items-center justify-between px-5 py-3.5">
-                    <div>
-                      <p className="font-mono text-sm text-slate-800">{c.crop_cosh_id}</p>
-                      <p className="text-xs text-slate-400">Diagnosis enabled · Added {new Date(c.created_at).toLocaleDateString()}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-                      <button onClick={() => toggle(c)} disabled={toggling === c.crop_cosh_id}
-                        className="text-xs text-red-400 border border-red-200 px-2.5 py-1 rounded-lg hover:bg-red-50 disabled:opacity-40">
-                        {toggling === c.crop_cosh_id ? '…' : 'Disable'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+        <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-50">
+          {filtered.map(row => (
+            <div key={row.cosh_id} className="flex items-center justify-between px-5 py-3.5">
+              <div className="min-w-0">
+                <p className="font-medium text-slate-800">{row.name_en}</p>
+                <p className="font-mono text-xs text-slate-400">{row.cosh_id}</p>
               </div>
-            </section>
-          )}
-          {disabled.length > 0 && (
-            <section>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Disabled ({disabled.length})</p>
-              <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-50">
-                {disabled.map(c => (
-                  <div key={c.crop_cosh_id} className="flex items-center justify-between px-5 py-3.5 opacity-60">
-                    <p className="font-mono text-sm text-slate-600">{c.crop_cosh_id}</p>
-                    <button onClick={() => toggle(c)} disabled={toggling === c.crop_cosh_id}
-                      className="text-xs text-green-600 border border-green-200 px-2.5 py-1 rounded-lg hover:bg-green-50 disabled:opacity-40">
-                      {toggling === c.crop_cosh_id ? '…' : 'Enable'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-          {crops.length === 0 && (
-            <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
-              <p className="text-slate-400">No crops added yet. Enter a Cosh crop ID above to enable crop-health features for that crop.</p>
+              <button onClick={() => toggle(row)}
+                disabled={toggling === row.cosh_id}
+                aria-pressed={row.enabled}
+                title={row.enabled ? 'Click to disable' : 'Click to enable'}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition disabled:opacity-50 ${
+                  row.enabled ? 'bg-emerald-500' : 'bg-slate-300'
+                }`}>
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                    row.enabled ? 'translate-x-5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
             </div>
-          )}
+          ))}
         </div>
       )}
     </AdminLayout>
