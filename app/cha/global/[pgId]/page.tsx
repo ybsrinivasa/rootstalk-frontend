@@ -21,7 +21,7 @@ import { RelationsSection, type RelationOut } from '@/components/advisory-author
 import { CQsSection, type CQOut } from '@/components/advisory-authoring/CQsSection'
 import { PublishModal } from '@/components/advisory-authoring/PublishModal'
 import {
-  ReadOnlyBanner, VersionHistorySection,
+  VersionHistorySection,
   type LineageRow,
 } from '@/components/advisory-authoring/LineageSection'
 import { PracticeFormModal, type ExistingPractice } from '@/components/advisory-authoring/PracticeFormModal'
@@ -330,16 +330,11 @@ export default function GlobalPGDetailPage() {
     } finally { setCloning(false) }
   }
 
-  async function handleMakeEditable(srcId: string, srcVersion: number) {
-    const existing = lineage.find(r => r.status === 'DRAFT')
-    if (existing && existing.id !== srcId) {
-      const ok = confirm(
-        `A v${existing.version} DRAFT already exists in this lineage. ` +
-        `Making v${srcVersion} editable will replace it (the existing ` +
-        `draft becomes INACTIVE). Continue?`
-      )
-      if (!ok) return
-    }
+  async function handleMakeEditable(srcId: string, _srcVersion: number) {
+    // Batch V (2026-05-18) — clone-to-draft is find-or-create now.
+    // If a DRAFT exists in the lineage, the backend returns it
+    // unchanged, so the CM lands on the existing DRAFT instead of
+    // creating a new one. No confirm needed.
     setMakingEditable(srcId); setCloneError('')
     try {
       const { data } = await api.post<PGRec>(
@@ -384,36 +379,42 @@ export default function GlobalPGDetailPage() {
 
   if (!pg) return <AdminLayout><div className="pt-20 text-center text-slate-400">Loading…</div></AdminLayout>
 
-  const existingDraft = lineage.find(r => r.status === 'DRAFT' && r.id !== pg.id) || null
-  const nextVersion = pg.status === 'DRAFT'
-    ? pg.version
-    : Math.max(...lineage.map(r => r.version), pg.version) + 1
+  // Batch V (2026-05-18) — mirror CA-PG Batch T. Non-DRAFT rows are
+  // read-only; edits go through the single DRAFT slot (Edit button
+  // on the row header calls clone-to-draft which is now
+  // find-or-create on the backend).
+  const isDraft = pg.status === 'DRAFT'
 
   return (
     <AdminLayout>
       <div className="max-w-4xl space-y-6">
         <div>
-          <Link href="/cha/global" className="text-xs text-slate-500 hover:text-slate-700">
+          <Link href={pg.problem_group_cosh_id
+              ? `/cha/global?pg=${encodeURIComponent(pg.problem_group_cosh_id)}`
+              : '/cha/global'}
+            className="text-xs text-slate-500 hover:text-slate-700">
             ← Back to CHA Library
           </Link>
         </div>
-
-        <ReadOnlyBanner
-          status={pg.status}
-          currentVersion={pg.version}
-          nextVersion={nextVersion}
-          existingDraft={existingDraft}
-          continueDraftHref={(draft) => `/cha/global/${draft.id}`}
-          cloning={cloning}
-          cloneError={cloneError}
-          onCloneToDraft={handleCloneToDraft}
-        />
 
         <VersionHistorySection
           lineage={lineage}
           rowDetailUrl={(row) => `/cha/global/${row.id}`}
           makingEditable={makingEditable}
           onMakeEditable={handleMakeEditable}
+          // Display DRAFT rows as "v{nextVersion} (draft)" — the
+          // version the draft becomes on publish — so two-v1 rows
+          // don't read as duplicates. Batch V (2026-05-18).
+          versionLabel={(row) => {
+            if (row.status === 'DRAFT') {
+              const otherMax = Math.max(
+                0,
+                ...lineage.filter(r => r.id !== row.id).map(r => r.version),
+              )
+              return `v${otherMax + 1} (draft)`
+            }
+            return `v${row.version}`
+          }}
         />
 
         <div className="flex items-start gap-4">
@@ -439,11 +440,28 @@ export default function GlobalPGDetailPage() {
               </p>
             )}
           </div>
-          <div className="flex gap-2 shrink-0">
-            <Link href={`/cha/global/${pgId}/preview`}
-              className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50">
-              👁 Preview
-            </Link>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <div className="flex gap-2 items-center">
+              <Link href={`/cha/global/${pgId}/preview`}
+                className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50">
+                👁 Preview
+              </Link>
+              {/* Batch V (2026-05-18) — single Edit / Make editable
+                  button on non-DRAFT rows replaces the read-only
+                  banner. Clone-to-draft is find-or-create, so
+                  clicking from ACTIVE while a DRAFT exists just
+                  navigates to the DRAFT (no new row, no demotion). */}
+              {!isDraft && (
+                <button onClick={handleCloneToDraft} disabled={cloning}
+                  className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50 disabled:opacity-50">
+                  {cloning ? 'Starting…' :
+                    pg.status === 'ACTIVE' ? '✏ Edit this version' : '✏ Make editable'}
+                </button>
+              )}
+            </div>
+            {!isDraft && cloneError && (
+              <p className="text-xs text-red-600">{cloneError}</p>
+            )}
             {pg.status === 'DRAFT' && (
               <button onClick={() => {
                 setPublishError(''); setPublishBlockers([]); setShowPublishModal(true)
@@ -469,18 +487,16 @@ export default function GlobalPGDetailPage() {
 
         {publishError && !showPublishModal && <p className="text-sm text-red-600">{publishError}</p>}
 
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-          <strong>Global PG recommendation</strong> — Clients import and customise this for their crops + districts. Practice authoring depth (Brand Lock, cascading L0/L1/L2, element form, Relations, Conditional Questions) lands in later batches.
-        </div>
-
         {/* Timelines */}
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold text-slate-800">Timelines <span className="text-slate-400 font-normal text-sm">({timelines.length})</span></h2>
-            <button onClick={() => setShowAddTL(true)}
-              className="text-sm font-medium px-3 py-1.5 rounded-xl border border-blue-300 text-blue-600">
-              + Add Timeline
-            </button>
+            {isDraft && (
+              <button onClick={() => setShowAddTL(true)}
+                className="text-sm font-medium px-3 py-1.5 rounded-xl border border-blue-300 text-blue-600">
+                + Add Timeline
+              </button>
+            )}
           </div>
 
           {timelines.length === 0 ? (
@@ -501,7 +517,7 @@ export default function GlobalPGDetailPage() {
                       </div>
                       <p className="text-xs text-slate-400 mt-0.5">{tl.from_type} · Day {tl.from_value} → {tl.to_value}</p>
                     </div>
-                    {tl.status === 'INACTIVE' ? (
+                    {isDraft && (tl.status === 'INACTIVE' ? (
                       <button
                         onClick={e => { e.stopPropagation(); toggleTimelineStatus(tl, 'ACTIVE') }}
                         disabled={togglingTl === tl.id}
@@ -515,18 +531,22 @@ export default function GlobalPGDetailPage() {
                         className="text-[11px] font-medium text-slate-500 border border-slate-200 px-2 py-1 rounded-lg hover:bg-slate-50 disabled:opacity-50"
                         title="Retire this timeline (excluded from farmer advisory; history preserved)"
                       >{togglingTl === tl.id ? '…' : '⊘ Inactive'}</button>
+                    ))}
+                    {isDraft && (
+                      <>
+                        <button onClick={e => { e.stopPropagation(); openEditTimeline(tl) }}
+                          className="text-slate-300 hover:text-blue-500 p-1" title="Edit timeline">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button onClick={e => { e.stopPropagation(); deleteTL(tl) }} className="text-slate-300 hover:text-red-400 p-1" title="Delete (cannot undo)">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </>
                     )}
-                    <button onClick={e => { e.stopPropagation(); openEditTimeline(tl) }}
-                      className="text-slate-300 hover:text-blue-500 p-1" title="Edit timeline">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                    <button onClick={e => { e.stopPropagation(); deleteTL(tl) }} className="text-slate-300 hover:text-red-400 p-1" title="Delete (cannot undo)">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
                     <svg className={`w-4 h-4 text-slate-400 transition-transform ${expanded === tl.id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
@@ -552,22 +572,26 @@ export default function GlobalPGDetailPage() {
                                 <span className="text-[11px] text-slate-400">
                                   {hasElements ? `${p.elements!.length} element${p.elements!.length === 1 ? '' : 's'}` : 'no elements'}
                                 </span>
-                                <button onClick={e => {
-                                  e.stopPropagation()
-                                  setEditingPractice({ timelineId: tl.id, practice: p })
-                                  setShowAddPractice(tl.id)
-                                }}
-                                  className="text-slate-300 hover:text-blue-500 p-1" title="Edit practice">
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                  </svg>
-                                </button>
-                                <button onClick={e => { e.stopPropagation(); handleDeletePractice(tl.id, p.id) }}
-                                  className="text-slate-300 hover:text-red-400 p-1" title="Delete practice">
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                  </svg>
-                                </button>
+                                {isDraft && (
+                                  <>
+                                    <button onClick={e => {
+                                      e.stopPropagation()
+                                      setEditingPractice({ timelineId: tl.id, practice: p })
+                                      setShowAddPractice(tl.id)
+                                    }}
+                                      className="text-slate-300 hover:text-blue-500 p-1" title="Edit practice">
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                      </svg>
+                                    </button>
+                                    <button onClick={e => { e.stopPropagation(); handleDeletePractice(tl.id, p.id) }}
+                                      className="text-slate-300 hover:text-red-400 p-1" title="Delete practice">
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                    </button>
+                                  </>
+                                )}
                                 <svg className={`w-3.5 h-3.5 text-slate-300 transition-transform ${isPExpanded ? 'rotate-180' : ''}`}
                                   fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -590,35 +614,44 @@ export default function GlobalPGDetailPage() {
                             </div>
                           )
                         })}
-                        <button onClick={() => {
-                          setEditingPractice(null)
-                          setShowAddPractice(tl.id)
-                        }}
-                          className="text-xs font-medium text-blue-600 mt-2">+ Add Practice</button>
+                        {isDraft && (
+                          <button onClick={() => {
+                            setEditingPractice(null)
+                            setShowAddPractice(tl.id)
+                          }}
+                            className="text-xs font-medium text-blue-600 mt-2">+ Add Practice</button>
+                        )}
                       </div>
 
                       {/* Relations + Conditional Questions — shared
                           with CCA via the same components (Batches
-                          39P-b2 + 39P-c). */}
-                      <RelationsSection
-                        timelineId={tl.id}
-                        timelineName={tl.name}
-                        practices={practiceMap[tl.id] || []}
-                        pipe={{ pipe: 'PG_GLOBAL', parentId: pgId }}
-                        onRelationsChange={(tid, rels) =>
-                          setRelationsByTimeline(m => ({ ...m, [tid]: rels }))
-                        }
-                      />
-                      <CQsSection
-                        timelineId={tl.id}
-                        timelineName={tl.name}
-                        practices={practiceMap[tl.id] || []}
-                        relations={relationsByTimeline[tl.id] || []}
-                        pipe={{ pipe: 'PG_GLOBAL', parentId: pgId }}
-                        onCQsChange={(tid, list) =>
-                          setCqsByTimeline(m => ({ ...m, [tid]: list }))
-                        }
-                      />
+                          39P-b2 + 39P-c). Hidden on non-DRAFT rows
+                          (Batch V mirror, 2026-05-18) — they're
+                          always-editable widgets and would let the
+                          CM mutate ACTIVE live state. */}
+                      {isDraft && (
+                        <>
+                          <RelationsSection
+                            timelineId={tl.id}
+                            timelineName={tl.name}
+                            practices={practiceMap[tl.id] || []}
+                            pipe={{ pipe: 'PG_GLOBAL', parentId: pgId }}
+                            onRelationsChange={(tid, rels) =>
+                              setRelationsByTimeline(m => ({ ...m, [tid]: rels }))
+                            }
+                          />
+                          <CQsSection
+                            timelineId={tl.id}
+                            timelineName={tl.name}
+                            practices={practiceMap[tl.id] || []}
+                            relations={relationsByTimeline[tl.id] || []}
+                            pipe={{ pipe: 'PG_GLOBAL', parentId: pgId }}
+                            onCQsChange={(tid, list) =>
+                              setCqsByTimeline(m => ({ ...m, [tid]: list }))
+                            }
+                          />
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

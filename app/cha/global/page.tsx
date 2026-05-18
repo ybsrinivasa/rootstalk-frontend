@@ -1,17 +1,29 @@
 'use client'
 
-// Batch 39P-a (2026-05-16) — SA-portal Global CHA-PG list.
+// Batch V (2026-05-18) — SA-portal Global CHA-PG entry rebuilt to
+// mirror the CA-PG flow shipped today (Batch T):
 //
-// Authoring flow: pick a Problem Group from Cosh's catalogue, choose
-// the bundle dimension (AREA_WISE / PLANT_WISE), and land on a fresh
-// DRAFT recommendation row that the CM fills in with timelines /
-// practices on the detail page. The PG detail editor reuses the
-// same Timeline → Practice → Element schema as CCA after Batch 39O
-// UCAT unification — same Brand Lock, frequency, Relations, CQs.
+//   /cha/global                  → Problems grid (one card per Cosh PG,
+//                                  showing Area-wise + Plant-wise status
+//                                  pills). Click a card → /cha/global?pg=…
+//
+//   /cha/global?pg=<pg_cosh_id>  → Two side-by-side bundle cards
+//                                  (Area-wise + Plant-wise) for the
+//                                  selected PG. No Import / Export
+//                                  (SA-side has none).
+//
+//   /cha/global/<rec_id>         → Existing detail editor (Timelines /
+//                                  Practices / Version history) — its
+//                                  back-arrow preserves the ?pg= filter.
+//
+// Behind the scenes: collapse the recommendation list to one head
+// per (pg × bundle) lineage (DRAFT > ACTIVE > most recent INACTIVE),
+// so the SA never sees the "4 v1 rows" pattern even after many
+// edit-publish cycles.
 
-import { useEffect, useState, FormEvent } from 'react'
+import { useEffect, useMemo, useState, Suspense, FormEvent } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
@@ -19,8 +31,8 @@ import { extractErrorMessage } from '@/lib/errors'
 interface PGRec {
   id: string
   problem_group_cosh_id: string
-  area_or_plant: string | null
-  status: string
+  area_or_plant: 'AREA_WISE' | 'PLANT_WISE' | null
+  status: 'DRAFT' | 'ACTIVE' | 'INACTIVE'
   version: number
   created_at: string
   client_id: string | null
@@ -32,28 +44,42 @@ interface ProblemGroup {
   status: string
 }
 
-interface CropItem {
-  cosh_id: string
-  name_en: string
-}
-
 const STATUS_COLOUR: Record<string, string> = {
   DRAFT: 'bg-amber-100 text-amber-700',
   ACTIVE: 'bg-green-100 text-green-700',
   INACTIVE: 'bg-slate-100 text-slate-500',
 }
 
-const AREA_PLANT_LABEL: Record<string, string> = {
-  AREA_WISE: 'Area-wise',
-  PLANT_WISE: 'Plant-wise',
+const BUNDLE_PILL: Record<string, string> = {
+  DRAFT: 'bg-amber-100 text-amber-700',
+  ACTIVE: 'bg-green-100 text-green-700',
+  INACTIVE: 'bg-slate-100 text-slate-500',
 }
 
-export default function GlobalCHAPage() {
+function bundleBadge(label: string, status: string | null) {
+  if (!status) {
+    return (
+      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-400 border border-dashed border-slate-200 font-medium">
+        {label}: not started
+      </span>
+    )
+  }
+  return (
+    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${BUNDLE_PILL[status] || 'bg-slate-100 text-slate-500'}`}>
+      {label}: {status}
+    </span>
+  )
+}
+
+function GlobalCHAContent() {
   const router = useRouter()
+  const params = useSearchParams()
+  const pgFilter = params.get('pg') || ''
+
   const [recs, setRecs] = useState<PGRec[]>([])
   const [problemGroups, setProblemGroups] = useState<ProblemGroup[]>([])
-  const [cropsByPg, setCropsByPg] = useState<Record<string, CropItem[]>>({})
   const [loading, setLoading] = useState(true)
+
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
@@ -63,42 +89,50 @@ export default function GlobalCHAPage() {
   }>({ problem_group_cosh_id: '', area_or_plant: 'AREA_WISE' })
 
   const load = () => {
-    // SA/CM admin view — show DRAFT + ACTIVE + INACTIVE rows.
-    // The default ACTIVE-only filter is for the CA-portal SE
-    // Import flow; here we need to see drafts being authored.
-    api.get<PGRec[]>('/advisory/global/pg-recommendations?include_drafts=true')
-      .then(r => setRecs(r.data))
-      .finally(() => setLoading(false))
+    Promise.all([
+      api.get<PGRec[]>('/advisory/global/pg-recommendations?include_drafts=true')
+        .then(r => setRecs(r.data)),
+      api.get<ProblemGroup[]>('/advisory/global/problem-groups')
+        .then(r => setProblemGroups(r.data))
+        .catch(() => setProblemGroups([])),
+    ]).finally(() => setLoading(false))
   }
 
-  useEffect(() => {
-    load()
-    api.get<ProblemGroup[]>('/advisory/global/problem-groups')
-      .then(r => setProblemGroups(r.data))
-      .catch(() => setProblemGroups([]))
-  }, [])
+  useEffect(() => { load() }, [])
 
-  // Map cosh_id → display name for the list rows.
-  const pgNameMap = problemGroups.reduce<Record<string, string>>(
-    (acc, p) => { acc[p.cosh_id] = p.name_en; return acc }, {},
+  // Batch V: collapse to one row per (pg × bundle) lineage. Head
+  // precedence DRAFT > ACTIVE > most-recent INACTIVE. INACTIVE rows
+  // are hidden — accessible from the detail page's Version History.
+  const collapsedRecs = useMemo(() => {
+    const STATUS_RANK: Record<string, number> = { DRAFT: 0, ACTIVE: 1, INACTIVE: 2 }
+    const byLineage = new Map<string, PGRec>()
+    for (const r of recs) {
+      const key = `${r.problem_group_cosh_id}::${r.area_or_plant ?? ''}`
+      const cur = byLineage.get(key)
+      if (!cur) { byLineage.set(key, r); continue }
+      const a = STATUS_RANK[r.status] ?? 99
+      const b = STATUS_RANK[cur.status] ?? 99
+      if (a < b) { byLineage.set(key, r); continue }
+      if (a === b && new Date(r.created_at) > new Date(cur.created_at)) {
+        byLineage.set(key, r)
+      }
+    }
+    return Array.from(byLineage.values())
+  }, [recs])
+
+  const filteredPgName = useMemo(
+    () => problemGroups.find(p => p.cosh_id === pgFilter)?.name_en || '',
+    [pgFilter, problemGroups],
   )
 
-  // Fetch applicable crops per distinct PG cosh_id surfaced in the
-  // recommendation list. One round-trip per unique PG; result cached
-  // for the lifetime of this page mount. Empty array (rather than
-  // missing key) lets us distinguish "no rows in sp_pg_crops" from
-  // "still loading".
-  useEffect(() => {
-    const distinct = Array.from(new Set(recs.map(r => r.problem_group_cosh_id)))
-    const pending = distinct.filter(id => !(id in cropsByPg))
-    if (pending.length === 0) return
-    pending.forEach(pgId => {
-      api.get<{ items: CropItem[] }>(`/diagnosis/pg-crops?pg=${encodeURIComponent(pgId)}`)
-        .then(r => setCropsByPg(prev => ({ ...prev, [pgId]: r.data.items || [] })))
-        .catch(() => setCropsByPg(prev => ({ ...prev, [pgId]: [] })))
+  const openCreate = (preselect?: { pgId?: string; bundle?: 'AREA_WISE' | 'PLANT_WISE' }) => {
+    setForm({
+      problem_group_cosh_id: preselect?.pgId || pgFilter || '',
+      area_or_plant: preselect?.bundle || 'AREA_WISE',
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recs])
+    setError('')
+    setShowCreate(true)
+  }
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
@@ -113,157 +147,252 @@ export default function GlobalCHAPage() {
       )
       setShowCreate(false)
       setForm({ problem_group_cosh_id: '', area_or_plant: 'AREA_WISE' })
-      // Land the CM on the new PG's editor so the "what next?" is
-      // obvious (add timelines). Falls back to a list refresh if the
-      // POST response is missing an id for any reason.
       if (created?.id) {
         router.push(`/cha/global/${created.id}`)
-      } else {
-        load()
-      }
+      } else { load() }
     } catch (err: unknown) {
       setError(extractErrorMessage(err, 'Failed to create.'))
     } finally { setCreating(false) }
   }
 
+  // ── Problems-grid view (no ?pg= filter) ────────────────────────
+  const problemsWithStatus = useMemo(() => {
+    return problemGroups.map(pg => {
+      const area = collapsedRecs.find(
+        r => r.problem_group_cosh_id === pg.cosh_id && r.area_or_plant === 'AREA_WISE',
+      )
+      const plant = collapsedRecs.find(
+        r => r.problem_group_cosh_id === pg.cosh_id && r.area_or_plant === 'PLANT_WISE',
+      )
+      return {
+        ...pg,
+        area_status: area?.status || null,
+        plant_status: plant?.status || null,
+      }
+    }).sort((a, b) => a.name_en.localeCompare(b.name_en))
+  }, [problemGroups, collapsedRecs])
+
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="bg-white rounded-2xl p-10 text-center text-slate-400 border border-slate-100">Loading…</div>
+      </AdminLayout>
+    )
+  }
+
+  // ── Bundle-cards view (one PG selected) ────────────────────────
+  if (pgFilter) {
+    const areaHead = collapsedRecs.find(
+      r => r.problem_group_cosh_id === pgFilter && r.area_or_plant === 'AREA_WISE',
+    )
+    const plantHead = collapsedRecs.find(
+      r => r.problem_group_cosh_id === pgFilter && r.area_or_plant === 'PLANT_WISE',
+    )
+
+    const renderCard = (
+      bundle: 'AREA_WISE' | 'PLANT_WISE',
+      head: PGRec | undefined,
+    ) => {
+      const label = bundle === 'AREA_WISE'
+        ? 'Recommendations for Area-wise Crops'
+        : 'Recommendations for Plant-wise Crops'
+      const icon = bundle === 'AREA_WISE' ? '🟧' : '🟪'
+      if (!head) {
+        return (
+          <div key={bundle}
+            className="bg-white rounded-2xl border border-dashed border-slate-200 p-6 flex flex-col">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-2xl">{icon}</span>
+              <h3 className="font-semibold text-slate-800">{label}</h3>
+            </div>
+            <p className="text-slate-400 text-sm mb-6">Not started</p>
+            <div className="mt-auto">
+              <button onClick={() => openCreate({ pgId: pgFilter, bundle })}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl">
+                + Add Recommendations
+              </button>
+            </div>
+          </div>
+        )
+      }
+      return (
+        <Link key={bundle} href={`/cha/global/${encodeURIComponent(head.id)}`}
+          className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 hover:border-blue-200 hover:shadow-md transition group">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-2xl">{icon}</span>
+            <h3 className="font-semibold text-slate-800">{label}</h3>
+          </div>
+          <div className="flex items-center gap-2 mb-3">
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLOUR[head.status]}`}>
+              {head.status}
+            </span>
+            <span className="text-xs text-slate-500">v{head.version}</span>
+          </div>
+          <dl className="text-sm text-slate-600 space-y-1 mb-4">
+            <div className="flex justify-between">
+              <dt className="text-slate-400">Created</dt>
+              <dd>{new Date(head.created_at).toLocaleDateString()}</dd>
+            </div>
+          </dl>
+          <div className="text-sm font-medium text-blue-600 group-hover:underline">
+            Open Recommendations →
+          </div>
+        </Link>
+      )
+    }
+
+    return (
+      <AdminLayout>
+        <div className="max-w-4xl space-y-6">
+          <div className="flex items-start gap-3">
+            <Link href="/cha/global"
+              className="mt-1 text-slate-400 hover:text-slate-600"
+              title="Back to all Problems">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </Link>
+            <div className="flex-1">
+              <h1 className="text-2xl font-bold text-slate-900">
+                {filteredPgName || pgFilter}
+              </h1>
+              <p className="text-slate-500 text-sm mt-0.5">
+                Global PG recommendations — up to two bundles, one for
+                Area-wise crops and one for Plant-wise.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {renderCard('AREA_WISE', areaHead)}
+            {renderCard('PLANT_WISE', plantHead)}
+          </div>
+        </div>
+
+        {showCreate && renderCreateModal()}
+      </AdminLayout>
+    )
+  }
+
+  // ── Default: Problems grid ─────────────────────────────────────
   return (
     <AdminLayout>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Global CHA Library</h1>
           <p className="text-slate-500 text-sm mt-0.5">
-            Standard treatment recommendations for Problem Groups. Clients
-            import these into their scope and adapt for their territory.
+            Standard treatment recommendations per Problem Group. Each PG has
+            two bundles — Area-wise and Plant-wise — that progress
+            independently. Click a Problem Group to author or review.
           </p>
         </div>
-        <button onClick={() => setShowCreate(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm">
-          + New PG Recommendation
-        </button>
       </div>
 
-      {loading ? (
-        <div className="bg-white rounded-2xl p-10 text-center text-slate-400 border border-slate-100">Loading…</div>
-      ) : recs.length === 0 ? (
+      {problemsWithStatus.length === 0 ? (
         <div className="bg-white rounded-2xl p-12 text-center border border-dashed border-slate-200">
-          <p className="text-slate-600 font-medium">No global PG recommendations yet</p>
-          <p className="text-slate-400 text-sm mt-1">
-            Create a recommendation for a Problem Group. Clients will import
-            and adapt it for their crops + districts.
-          </p>
-          <button onClick={() => setShowCreate(true)}
-            className="mt-4 bg-blue-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl">
-            Create First Recommendation
-          </button>
+          <p className="text-slate-400 text-4xl mb-3">🩺</p>
+          <p className="text-slate-600 font-medium">No problem groups synced yet from Cosh.</p>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-100">
-              <tr>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Problem Group</th>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide hidden sm:table-cell">Bundle</th>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                <th className="text-right px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">v</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {recs.map(r => {
-                const crops = cropsByPg[r.problem_group_cosh_id]
-                const cropsLoaded = crops !== undefined
-                const visibleCrops = cropsLoaded ? crops.slice(0, 5) : []
-                const overflowCount = cropsLoaded ? Math.max(0, crops.length - visibleCrops.length) : 0
-                return (
-                  <tr key={r.id} className="hover:bg-slate-50">
-                    <td className="px-5 py-3.5">
-                      <Link href={`/cha/global/${r.id}`} className="text-sm font-medium text-slate-800 hover:text-blue-600">
-                        {pgNameMap[r.problem_group_cosh_id] || r.problem_group_cosh_id}
-                      </Link>
-                      <p className="text-[10px] font-mono text-slate-400 mt-0.5">{r.problem_group_cosh_id}</p>
-                      {cropsLoaded && crops.length > 0 && (
-                        <div className="mt-1.5 flex flex-wrap gap-1" title={`Applicable crops (from Cosh sp_pg_crops, ${crops.length} total)`}>
-                          {visibleCrops.map(c => (
-                            <span key={c.cosh_id} className="text-[10px] bg-green-50 text-green-700 px-2 py-0.5 rounded-full">
-                              {c.name_en}
-                            </span>
-                          ))}
-                          {overflowCount > 0 && (
-                            <span className="text-[10px] text-slate-500 px-1.5 py-0.5">+{overflowCount} more</span>
-                          )}
-                        </div>
-                      )}
-                      {cropsLoaded && crops.length === 0 && (
-                        <p className="text-[10px] text-slate-300 mt-1.5 italic">No crops linked in sp_pg_crops</p>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5 text-slate-600 hidden sm:table-cell text-xs">
-                      {AREA_PLANT_LABEL[r.area_or_plant || ''] || '—'}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOUR[r.status] || 'bg-slate-100 text-slate-600'}`}>{r.status}</span>
-                    </td>
-                    <td className="px-5 py-3.5 text-right text-slate-400 text-xs">v{r.version}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {problemsWithStatus.map(p => {
+            const activeCount =
+              (p.area_status === 'ACTIVE' ? 1 : 0) +
+              (p.plant_status === 'ACTIVE' ? 1 : 0)
+            const draftCount =
+              (p.area_status === 'DRAFT' ? 1 : 0) +
+              (p.plant_status === 'DRAFT' ? 1 : 0)
+            return (
+              <Link key={p.cosh_id}
+                href={`/cha/global?pg=${encodeURIComponent(p.cosh_id)}`}
+                className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+                <div className="flex items-start justify-between mb-3">
+                  <p className="font-semibold text-slate-900 truncate">{p.name_en}</p>
+                  <span className="text-xs text-slate-400 shrink-0 ml-2">
+                    {activeCount > 0 && <>{activeCount} active</>}
+                    {activeCount > 0 && draftCount > 0 && ' · '}
+                    {draftCount > 0 && <>{draftCount} draft</>}
+                    {activeCount === 0 && draftCount === 0 && <>not started</>}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {bundleBadge('Area', p.area_status)}
+                  {bundleBadge('Plant', p.plant_status)}
+                </div>
+              </Link>
+            )
+          })}
         </div>
       )}
 
-      {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-            <div className="p-6 border-b border-slate-100">
-              <h2 className="font-bold text-slate-900">New Global PG Recommendation</h2>
-              <p className="text-slate-500 text-sm mt-0.5">Standard treatment for a Problem Group — will be available to all clients to import.</p>
-            </div>
-            <form onSubmit={handleCreate} className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Problem Group</label>
-                <select value={form.problem_group_cosh_id}
-                  onChange={e => setForm(f => ({ ...f, problem_group_cosh_id: e.target.value }))}
-                  required
-                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">— Pick a Problem Group —</option>
-                  {problemGroups.map(pg => (
-                    <option key={pg.cosh_id} value={pg.cosh_id}>{pg.name_en}</option>
-                  ))}
-                </select>
-                {problemGroups.length === 0 && (
-                  <p className="text-xs text-amber-700 mt-1">No problem groups loaded.</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Bundle</label>
-                <div className="flex gap-3">
-                  {(['AREA_WISE', 'PLANT_WISE'] as const).map(ap => (
-                    <label key={ap} className="flex items-center gap-2 text-sm flex-1 border border-slate-200 rounded-xl px-3 py-2 cursor-pointer hover:bg-slate-50">
-                      <input type="radio" name="area_or_plant"
-                        checked={form.area_or_plant === ap}
-                        onChange={() => setForm(f => ({ ...f, area_or_plant: ap }))}
-                      />
-                      <span>{AREA_PLANT_LABEL[ap]}</span>
-                    </label>
-                  ))}
-                </div>
-                <p className="text-xs text-slate-400 mt-1">
-                  Each (PG, bundle) is its own recommendation with its own publish lifecycle.
-                </p>
-              </div>
-              {error && <p className="text-sm text-red-600">{error}</p>}
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => { setShowCreate(false); setError('') }}
-                  className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
-                <button type="submit" disabled={creating || !form.problem_group_cosh_id}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
-                  {creating ? 'Creating…' : 'Create'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {showCreate && renderCreateModal()}
     </AdminLayout>
+  )
+
+  function renderCreateModal() {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+          <div className="p-6 border-b border-slate-100">
+            <h2 className="font-bold text-slate-900">New Global PG Recommendation</h2>
+            <p className="text-slate-500 text-sm mt-0.5">
+              Standard treatment for a Problem Group — clients import and
+              adapt it for their crops + districts.
+            </p>
+          </div>
+          <form onSubmit={handleCreate} className="p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Problem Group</label>
+              <select value={form.problem_group_cosh_id}
+                onChange={e => setForm(f => ({ ...f, problem_group_cosh_id: e.target.value }))}
+                required disabled={!!pgFilter}
+                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50">
+                <option value="">— Pick a Problem Group —</option>
+                {problemGroups.map(pg => (
+                  <option key={pg.cosh_id} value={pg.cosh_id}>{pg.name_en}</option>
+                ))}
+              </select>
+              {problemGroups.length === 0 && (
+                <p className="text-xs text-amber-700 mt-1">No problem groups loaded.</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Bundle</label>
+              <div className="flex gap-3">
+                {(['AREA_WISE', 'PLANT_WISE'] as const).map(ap => (
+                  <label key={ap} className="flex items-center gap-2 text-sm flex-1 border border-slate-200 rounded-xl px-3 py-2 cursor-pointer hover:bg-slate-50">
+                    <input type="radio" name="area_or_plant"
+                      checked={form.area_or_plant === ap}
+                      onChange={() => setForm(f => ({ ...f, area_or_plant: ap }))}
+                    />
+                    <span>{ap === 'AREA_WISE' ? 'Area-wise' : 'Plant-wise'}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Each (PG, bundle) is its own recommendation with its own publish lifecycle.
+              </p>
+            </div>
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => { setShowCreate(false); setError('') }}
+                className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
+              <button type="submit" disabled={creating || !form.problem_group_cosh_id}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
+                {creating ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )
+  }
+}
+
+export default function GlobalCHAPage() {
+  return (
+    <Suspense fallback={<AdminLayout><div className="bg-white rounded-2xl p-10 text-center text-slate-400 border border-slate-100">Loading…</div></AdminLayout>}>
+      <GlobalCHAContent />
+    </Suspense>
   )
 }
