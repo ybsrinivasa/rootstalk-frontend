@@ -23,22 +23,29 @@ const PRIVILEGE_OPTIONS = [
 function roleLabel(r: string) { return ROLE_OPTIONS.find(x => x.value === r)?.label || r }
 function roleColour(r: string) { return ROLE_OPTIONS.find(x => x.value === r)?.colour || 'bg-slate-100 text-slate-600' }
 
+interface PrivilegeOwner {
+  privilege: string
+  cm_user_id: string | null
+  name: string | null
+  email: string | null
+}
+
 export default function UsersPage() {
   const [users, setUsers] = useState<NeytiryUser[]>([])
+  const [owners, setOwners] = useState<PrivilegeOwner[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState<NeytiryUser | null>(null)
   const [form, setForm] = useState({ name: '', phone: '', email: '', roles: [] as string[] })
-  const [privModal, setPrivModal] = useState<NeytiryUser | null>(null)
-  const [selectedPrivs, setSelectedPrivs] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
+  const [savingOwner, setSavingOwner] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const load = () =>
-    api.get<NeytiryUser[]>('/admin/users')
-      .then(r => setUsers(r.data))
-      .finally(() => setLoading(false))
+  const load = () => Promise.all([
+    api.get<NeytiryUser[]>('/admin/users').then(r => setUsers(r.data)),
+    api.get<PrivilegeOwner[]>('/admin/cm-privileges').then(r => setOwners(r.data)),
+  ]).finally(() => setLoading(false))
 
   useEffect(() => { load() }, [])
 
@@ -79,25 +86,20 @@ export default function UsersPage() {
     load()
   }
 
-  async function savePrivileges() {
-    if (!privModal) return
-    setSaving(true)
+  async function setOwner(privilege: string, cmUserId: string | null) {
+    setSavingOwner(privilege); setError('')
     try {
-      await api.put(`/admin/users/${privModal.id}/privileges`, { privileges: selectedPrivs })
-      setPrivModal(null)
-      load()
-    } finally { setSaving(false) }
+      await api.put(`/admin/cm-privileges/${privilege}`, { cm_user_id: cmUserId })
+      await load()
+    } catch (e: any) {
+      setError(e?.response?.data?.detail?.message || e?.response?.data?.detail || 'Failed to set owner')
+    } finally { setSavingOwner(null) }
   }
 
   function openEdit(user: NeytiryUser) {
     setEditing(user)
     setForm({ name: user.name || '', phone: user.phone || '', email: user.email || '', roles: user.roles })
     setShowCreate(true)
-  }
-
-  function openPriv(user: NeytiryUser) {
-    setPrivModal(user)
-    setSelectedPrivs([...user.privileges])
   }
 
   const cms = users.filter(u => u.roles.includes('CONTENT_MANAGER'))
@@ -135,6 +137,47 @@ export default function UsersPage() {
           </div>
         ) : (
           <div className="space-y-6">
+            {/* Content Manager responsibilities — Batch U (2026-05-18).
+                Exactly one CM holds each privilege at a time. Changing
+                the dropdown atomically demotes the previous holder. */}
+            <section>
+              <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                Content Manager Responsibilities
+              </h2>
+              <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
+                {PRIVILEGE_OPTIONS.map(p => {
+                  const owner = owners.find(o => o.privilege === p.value)
+                  return (
+                    <div key={p.value} className="flex items-center justify-between px-5 py-4 gap-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-gray-900">{p.label}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {owner?.cm_user_id
+                            ? `Currently held by ${owner.name || owner.email}.`
+                            : 'No one is responsible for this yet.'}
+                        </p>
+                      </div>
+                      <select
+                        value={owner?.cm_user_id || ''}
+                        disabled={savingOwner === p.value || cms.length === 0}
+                        onChange={e => setOwner(p.value, e.target.value || null)}
+                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/30 bg-white disabled:bg-gray-50 min-w-[14rem]">
+                        <option value="">(unassigned)</option>
+                        {cms.filter(c => c.status === 'ACTIVE').map(c => (
+                          <option key={c.id} value={c.id}>{c.name || c.email}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )
+                })}
+                {cms.length === 0 && (
+                  <p className="px-5 py-3 text-xs text-gray-400">
+                    Add at least one Content Manager below to assign responsibilities.
+                  </p>
+                )}
+              </div>
+            </section>
+
             {/* Content Managers */}
             {cms.length > 0 && (
               <section>
@@ -164,10 +207,6 @@ export default function UsersPage() {
                         )}
                       </div>
                       <div className="flex gap-2 shrink-0 ml-3">
-                        <button onClick={() => openPriv(user)}
-                          className="text-xs font-medium text-purple-600 bg-purple-50 px-3 py-1.5 rounded-lg hover:bg-purple-100">
-                          Privileges
-                        </button>
                         <button onClick={() => openEdit(user)}
                           className="text-xs font-medium text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg hover:bg-gray-100">
                           Edit
@@ -289,41 +328,6 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Privileges modal */}
-      {privModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-1">CM Privileges</h2>
-            <p className="text-sm text-gray-500 mb-4">{privModal.name || privModal.email}</p>
-            <div className="space-y-2">
-              {PRIVILEGE_OPTIONS.map(p => (
-                <button key={p.value}
-                  onClick={() => setSelectedPrivs(prev =>
-                    prev.includes(p.value) ? prev.filter(x => x !== p.value) : [...prev, p.value]
-                  )}
-                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 text-sm font-medium transition-all ${
-                    selectedPrivs.includes(p.value)
-                      ? 'border-purple-500 bg-purple-50 text-purple-700'
-                      : 'border-gray-200 text-gray-600'
-                  }`}>
-                  <span>{p.label}</span>
-                  {selectedPrivs.includes(p.value) && <span className="text-purple-500">✓</span>}
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={savePrivileges} disabled={saving}
-                className="flex-1 py-3 bg-purple-600 text-white text-sm font-semibold rounded-xl disabled:opacity-40 hover:bg-purple-700">
-                {saving ? 'Saving…' : 'Save Privileges'}
-              </button>
-              <button onClick={() => setPrivModal(null)}
-                className="px-5 rounded-xl border border-gray-200 text-gray-600 text-sm hover:bg-gray-50">
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </AdminLayout>
   )
 }
