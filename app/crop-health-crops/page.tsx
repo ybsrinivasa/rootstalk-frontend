@@ -11,6 +11,7 @@ export default function CropHealthCropsPage() {
   const [toggling, setToggling] = useState<string | null>(null)
   const [newCrop, setNewCrop] = useState('')
   const [adding, setAdding] = useState(false)
+  const [error, setError] = useState('')
 
   const load = () =>
     api.get<CropHealth[]>('/admin/crop-health-crops')
@@ -19,8 +20,18 @@ export default function CropHealthCropsPage() {
 
   useEffect(() => { load() }, [])
 
+  function pickError(e: any, fallback: string): string {
+    const detail = e?.response?.data?.detail
+    if (typeof detail === 'object' && detail?.code === 'cm_privilege_required') {
+      return `${detail.message || fallback} Ask the SA to assign the Crop Health Crops privilege to you on the Users page.`
+    }
+    if (typeof detail === 'object' && detail?.message) return detail.message
+    if (typeof detail === 'string') return detail
+    return fallback
+  }
+
   async function toggle(crop: CropHealth) {
-    setToggling(crop.crop_cosh_id)
+    setToggling(crop.crop_cosh_id); setError('')
     try {
       if (crop.enabled) {
         await api.put(`/admin/crop-health-crops/${crop.crop_cosh_id}/disable`, {})
@@ -28,16 +39,20 @@ export default function CropHealthCropsPage() {
         await api.put(`/admin/crop-health-crops/${crop.crop_cosh_id}/enable`, {})
       }
       load()
+    } catch (e: any) {
+      setError(pickError(e, 'Failed to update crop.'))
     } finally { setToggling(null) }
   }
 
   async function addCrop() {
     if (!newCrop.trim()) return
-    setAdding(true)
+    setAdding(true); setError('')
     try {
       await api.put(`/admin/crop-health-crops/${newCrop.trim()}/enable`, {})
       setNewCrop('')
       load()
+    } catch (e: any) {
+      setError(pickError(e, 'Failed to add crop.'))
     } finally { setAdding(false) }
   }
 
@@ -60,6 +75,12 @@ export default function CropHealthCropsPage() {
           </p>
         </div>
       </div>
+
+      {error && (
+        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       {/* Add crop */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 mb-5 flex gap-2">
