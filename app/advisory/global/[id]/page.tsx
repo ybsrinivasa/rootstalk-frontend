@@ -1254,6 +1254,12 @@ export default function GlobalPackageDetailPage() {
             if (!tl || !pkg) return undefined
             return `${pkg.package_type} · ${tl.from_type} · ${tl.name}`
           })()}
+          timelineWindow={(() => {
+            if (!showAddPractice) return undefined
+            const tl = timelines.find(t => t.id === showAddPractice)
+            if (!tl) return undefined
+            return { from_value: tl.from_value, to_value: tl.to_value }
+          })()}
           pipe={{ pipe: 'CCA_GLOBAL', parentId: id }}
           onClose={() => {
             setShowAddPractice(null)
