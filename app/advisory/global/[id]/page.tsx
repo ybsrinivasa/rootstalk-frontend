@@ -14,6 +14,15 @@ import { PracticeFormModal, type ExistingPractice } from '@/components/advisory-
 import api from '@/lib/api'
 import { practiceShortLabel } from '@/lib/practice-label'
 
+// Batch DD (2026-05-19) — Custom Parameter / Variable authoring is
+// hidden on SA-CCA. User rule: "Globals are pure Cosh — the SA
+// should be pushing back to Cosh for any new universal P-V need,
+// not creating one-off customs that bypass Cosh's authority."
+// Custom P-V remains available on CA-CCA (per-client scope, which
+// is the right place for client-specific extensions). Flip to
+// `true` if Custom P-V on SA needs to be reinstated.
+const SHOW_CUSTOM_PV = false
+
 interface Package {
   id: string; name: string; crop_cosh_id: string
   package_type: string
@@ -1596,7 +1605,7 @@ export default function GlobalPackageDetailPage() {
                             <option key={v.id} value={v.id}>{v.name}</option>
                           ))}
                         </select>
-                        {isCustom && !isEditingThisParam && (
+                        {SHOW_CUSTOM_PV && isCustom && !isEditingThisParam && (
                           <>
                             <button
                               onClick={() => {
@@ -1617,14 +1626,16 @@ export default function GlobalPackageDetailPage() {
                             </button>
                           </>
                         )}
-                        <button
-                          onClick={() => {
-                            setNewVarForParamId(newVarForParamId === param.id ? null : param.id)
-                            setNewVarName('')
-                          }}
-                          className="text-xs text-blue-600 hover:underline">
-                          {newVarForParamId === param.id ? 'Cancel' : '+ Variable'}
-                        </button>
+                        {SHOW_CUSTOM_PV && (
+                          <button
+                            onClick={() => {
+                              setNewVarForParamId(newVarForParamId === param.id ? null : param.id)
+                              setNewVarName('')
+                            }}
+                            className="text-xs text-blue-600 hover:underline">
+                            {newVarForParamId === param.id ? 'Cancel' : '+ Variable'}
+                          </button>
+                        )}
                       </div>
                       {/* Variable rendering — Batch 35 (2026-05-14): the
                           gate is per-variable (cosh_id), not per-parameter
@@ -1655,8 +1666,23 @@ export default function GlobalPackageDetailPage() {
                               <div className="flex flex-wrap gap-1.5">
                                 {seVars.map(v => {
                                   const key = `${param.id}:${v.id}`
-                                  const editingThis = editingVarKey === key
+                                  const editingThis = SHOW_CUSTOM_PV && editingVarKey === key
                                   const isAssigned = v.id === assignedId
+                                  if (!SHOW_CUSTOM_PV) {
+                                    // Batch DD (2026-05-19) — render
+                                    // historical SE-added variables as
+                                    // read-only chips. SA can still see
+                                    // them and dropdowns still assign them
+                                    // (preserves any existing data) but no
+                                    // new rename/delete is offered.
+                                    return (
+                                      <span key={v.id}
+                                        className={`inline-flex items-center gap-1 text-[11px] rounded-full px-2.5 py-0.5 ${isAssigned ? 'bg-green-100 text-green-800 font-medium ring-1 ring-green-300' : 'bg-slate-100 text-slate-500'}`}
+                                        title={isAssigned ? 'Assigned to this Package' : 'Legacy custom — read-only on SA'}>
+                                        {v.name}
+                                      </span>
+                                    )
+                                  }
                                   return editingThis ? (
                                     <input key={v.id}
                                       value={editingVarName}
@@ -1692,7 +1718,7 @@ export default function GlobalPackageDetailPage() {
                 })
                 })()}
 
-                {newVarForParamId && (
+                {SHOW_CUSTOM_PV && newVarForParamId && (
                   <div className="flex items-center gap-2 pt-2">
                     <input
                       value={newVarName}
@@ -1712,7 +1738,10 @@ export default function GlobalPackageDetailPage() {
                 {/* New Parameter — opens an atomic sub-dialog. Per Batch 28
                     the API requires name + ≥ 2 variables in one round-trip,
                     so the inline single-field form is replaced by a proper
-                    sub-form. */}
+                    sub-form. Batch DD (2026-05-19) — hidden on SA per user
+                    rule: Globals are pure Cosh. Custom P-V stays on CA-CCA
+                    where it belongs. */}
+                {SHOW_CUSTOM_PV && (
                 <div className="pt-3 border-t border-slate-50">
                   {!creatingParam ? (
                     <button onClick={openCreateParam}
@@ -1783,6 +1812,7 @@ export default function GlobalPackageDetailPage() {
                     </div>
                   )}
                 </div>
+                )}
 
                 {pvSaveError && <p className="text-xs text-red-600">{pvSaveError}</p>}
               </div>
