@@ -3,10 +3,31 @@ import { useState, useEffect } from 'react'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 
+type EntitySummaryRow = {
+  entity_type: string
+  inserted: number
+  updated: number
+  failed: number
+}
+
 type SyncLog = {
-  sync_id: string; sync_mode: string; status: string
-  items_synced: number; items_failed: number
-  started_at: string; completed_at: string | null
+  sync_id: string
+  initiated_by: string | null
+  sync_mode: string
+  status: string
+  items_synced: number
+  items_failed: number
+  entity_summary: EntitySummaryRow[] | null
+  started_at: string
+  completed_at: string | null
+}
+
+// Humanise Cosh entity_types (e.g. "input_manufacturers" →
+// "Input Manufacturers", "biological_names" → "Biological Names").
+function humanizeEntityType(s: string): string {
+  return s.split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -98,30 +119,68 @@ export default function SyncPage() {
           ? <p className="text-center py-12 text-slate-400">Loading…</p>
           : logs.length === 0
             ? <p className="text-center py-12 text-slate-400">No syncs yet. Waiting for first Cosh sync.</p>
-            : logs.map((log, i) => (
-              <div key={i} className="flex items-center justify-between px-5 py-4 border-b border-slate-100 last:border-0">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[log.status] || 'bg-slate-100 text-slate-500'}`}>
-                      {log.status}
-                    </span>
-                    <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded font-mono">
-                      {log.sync_mode || 'unknown'}
-                    </span>
+            : logs.map((log, i) => {
+              // Filter out untouched batches (Cosh emits zero-change rows
+              // when a sync had nothing new for that entity type).
+              const changed = (log.entity_summary || []).filter(
+                e => e.inserted + e.updated + e.failed > 0,
+              )
+              return (
+                <div key={i} className="px-5 py-4 border-b border-slate-100 last:border-0">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[log.status] || 'bg-slate-100 text-slate-500'}`}>
+                          {log.status}
+                        </span>
+                        <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                          {log.sync_mode || 'unknown'}
+                        </span>
+                        {log.initiated_by && (
+                          <span className="text-xs text-slate-500">
+                            by {log.initiated_by}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm text-slate-700">
+                        <span className="text-emerald-600 font-medium">{log.items_synced}</span> synced
+                        {log.items_failed > 0 && <span className="text-red-500 ml-2">{log.items_failed} failed</span>}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {new Date(log.started_at).toLocaleString()}
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-500 mt-1 font-mono">{log.sync_id}</p>
+                  {/* Per-entity breakdown — the "actual values"
+                      that replace the meaningless UUID. Compact
+                      chips list, only entity types with changes. */}
+                  {changed.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {changed.map(e => {
+                        const total = e.inserted + e.updated + e.failed
+                        return (
+                          <span key={e.entity_type}
+                            className="text-xs px-2 py-0.5 rounded bg-slate-50 border border-slate-200 text-slate-700">
+                            <span className="font-medium">{humanizeEntityType(e.entity_type)}</span>
+                            <span className="text-slate-500 ml-1">×{total}</span>
+                            {e.failed > 0 && (
+                              <span className="text-red-500 ml-1">({e.failed} failed)</span>
+                            )}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {/* Legacy rows with no entity_summary fall back
+                      to a faint sync_id footnote for traceability. */}
+                  {changed.length === 0 && log.sync_id && (
+                    <p className="text-xs text-slate-300 mt-1 font-mono">{log.sync_id}</p>
+                  )}
                 </div>
-                <div className="text-right">
-                  <p className="text-sm text-slate-700">
-                    <span className="text-emerald-600 font-medium">{log.items_synced}</span> synced
-                    {log.items_failed > 0 && <span className="text-red-500 ml-2">{log.items_failed} failed</span>}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {new Date(log.started_at).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-            ))
+              )
+            })
         }
       </div>
     </AdminLayout>
