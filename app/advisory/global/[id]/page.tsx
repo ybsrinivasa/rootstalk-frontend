@@ -11,6 +11,7 @@ import {
   type LineageRow as SharedLineageRow,
 } from '@/components/advisory-authoring/LineageSection'
 import { PracticeFormModal, type ExistingPractice } from '@/components/advisory-authoring/PracticeFormModal'
+import { useReadOnlyGuard } from '@/components/advisory-authoring/ReadOnlyGuard'
 import api from '@/lib/api'
 import { practiceShortLabel } from '@/lib/practice-label'
 
@@ -802,6 +803,18 @@ export default function GlobalPackageDetailPage() {
   // directing them to clone-to-draft (or continue an existing draft).
   const existingDraft = lineage.find(r => r.status === 'DRAFT' && r.id !== pkg?.id) || null
   const nextVersion = pkg ? (pkg.published_at == null ? pkg.version : Math.max(...lineage.map(r => r.version), pkg.version) + 1) : 0
+  // Editing is allowed only on DRAFT rows. ACTIVE / INACTIVE rows
+  // are historical snapshots — the user must clone-to-draft from
+  // the banner first. Prior to this gate, the page rendered the
+  // full editor regardless of status; users would type for an hour
+  // then hit a 422 at Publish/Save time ("not in DRAFT state").
+  // 2026-05-21 fix: disable every edit trigger up-front and wrap
+  // the editable body in a fieldset so the visual state matches.
+  const editorReadOnly = pkg ? pkg.status !== 'DRAFT' : true
+  const { tryEdit, GuardModal } = useReadOnlyGuard({
+    isReadOnly: editorReadOnly,
+    statusLabel: pkg?.status?.toLowerCase() || 'published',
+  })
   return (
     <AdminLayout>
       <div className="max-w-4xl space-y-6">
@@ -903,12 +916,12 @@ export default function GlobalPackageDetailPage() {
               👁 Preview
             </Link>
             <button
-              onClick={openEdit}
+              onClick={() => tryEdit(openEdit)}
               className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50">
               ✎ Edit details
             </button>
             <button
-              onClick={() => { setShowSignature(true); setPvSaveError('') }}
+              onClick={() => tryEdit(() => { setShowSignature(true); setPvSaveError('') })}
               className="border border-slate-300 text-slate-700 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50">
               ✎ Set signature
             </button>
@@ -936,7 +949,7 @@ export default function GlobalPackageDetailPage() {
             <h2 className="font-semibold text-slate-800">
               Timelines <span className="text-slate-400 font-normal text-sm">({timelines.length})</span>
             </h2>
-            <button onClick={openAddTimeline}
+            <button onClick={() => tryEdit(openAddTimeline)}
               className="text-sm font-medium px-3 py-1.5 rounded-xl border border-blue-300 text-blue-600 hover:bg-blue-50">
               + Add Timeline
             </button>
@@ -962,13 +975,13 @@ export default function GlobalPackageDetailPage() {
                       </div>
                       <p className="text-xs text-slate-400 mt-0.5">{tl.from_type} · {formatTimelineRange(tl)}</p>
                     </div>
-                    <button onClick={e => { e.stopPropagation(); openEditTimeline(tl) }}
+                    <button onClick={e => { e.stopPropagation(); tryEdit(() => openEditTimeline(tl)) }}
                       className="text-slate-300 hover:text-blue-500 p-1" title="Edit timeline">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
                     </button>
-                    <button onClick={e => { e.stopPropagation(); handleDeleteTL(tl) }} className="text-slate-300 hover:text-red-400 p-1" title="Delete timeline">
+                    <button onClick={e => { e.stopPropagation(); tryEdit(() => handleDeleteTL(tl)) }} className="text-slate-300 hover:text-red-400 p-1" title="Delete timeline">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                       </svg>
@@ -1001,13 +1014,13 @@ export default function GlobalPackageDetailPage() {
                                   <span className="text-[11px] text-slate-400">
                                     {hasElements ? `${p.elements!.length} element${p.elements!.length === 1 ? '' : 's'}` : 'no elements'}
                                   </span>
-                                  <button onClick={e => { e.stopPropagation(); openEditPractice(tl.id, p) }}
+                                  <button onClick={e => { e.stopPropagation(); tryEdit(() => openEditPractice(tl.id, p)) }}
                                     className="text-slate-300 hover:text-blue-500 p-1" title="Edit practice">
                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                                     </svg>
                                   </button>
-                                  <button onClick={e => { e.stopPropagation(); handleDeletePractice(tl.id, p.id) }}
+                                  <button onClick={e => { e.stopPropagation(); tryEdit(() => handleDeletePractice(tl.id, p.id)) }}
                                     className="text-slate-300 hover:text-red-400 p-1" title="Delete practice">
                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1059,7 +1072,7 @@ export default function GlobalPackageDetailPage() {
                             )
                           })
                       }
-                      <button onClick={() => setShowAddPractice(tl.id)} className="text-xs font-medium text-blue-600 mt-2 hover:underline">
+                      <button onClick={() => tryEdit(() => setShowAddPractice(tl.id))} className="text-xs font-medium text-blue-600 mt-2 hover:underline">
                         + Add Practice
                       </button>
 
@@ -1888,6 +1901,7 @@ export default function GlobalPackageDetailPage() {
             </div>
           </div>
         )}
+        <GuardModal />
       </div>
     </AdminLayout>
   )
