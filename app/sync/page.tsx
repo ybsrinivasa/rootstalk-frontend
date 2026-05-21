@@ -19,6 +19,8 @@ const STATUS_STYLE: Record<string, string> = {
 export default function SyncPage() {
   const [logs, setLogs] = useState<SyncLog[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshingCatalog, setRefreshingCatalog] = useState(false)
+  const [catalogMsg, setCatalogMsg] = useState<string | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -27,6 +29,19 @@ export default function SyncPage() {
       const { data } = await api.get('/sync/cosh/log?limit=20')
       setLogs(data)
     } finally { setLoading(false) }
+  }
+
+  async function refreshManufacturerCatalog() {
+    setRefreshingCatalog(true); setCatalogMsg(null)
+    try {
+      const { data } = await api.post<{ rows_written: number; category: string }>(
+        '/admin/dealer/manufacturers-catalog/refresh',
+      )
+      setCatalogMsg(`✓ Wrote ${data.rows_written} rows (${data.category})`)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      setCatalogMsg(`✗ ${typeof detail === 'string' ? detail : 'Refresh failed'}`)
+    } finally { setRefreshingCatalog(false) }
   }
 
   return (
@@ -46,6 +61,36 @@ export default function SyncPage() {
         <span className="text-blue-600 text-xs mt-1 block">
           Note: Field Mapping document pending — entity_type names to be verified on first production sync.
         </span>
+      </div>
+
+      {/* Derived caches — materialised views built off Cosh data
+          that need an explicit rebuild after a sync changes the
+          source. Lazy on first read; this button forces a refresh
+          on demand. */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 mb-5">
+        <h2 className="text-base font-semibold text-slate-900">Derived caches</h2>
+        <p className="text-xs text-slate-500 mt-0.5 mb-4">
+          Run after a Cosh sync adds or renames manufacturers in scope.
+        </p>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-slate-800">Dealer manufacturer catalog</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Pesticide + Fertilizer manufacturer lists shown to dealers on My Dealerships. Walks commonnames_l2 → tradename_commonname → tradename_manufacturer.
+            </p>
+          </div>
+          <button
+            onClick={refreshManufacturerCatalog}
+            disabled={refreshingCatalog}
+            className="shrink-0 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium px-4 py-2 rounded-lg">
+            {refreshingCatalog ? 'Refreshing…' : '↻ Refresh now'}
+          </button>
+        </div>
+        {catalogMsg && (
+          <p className={`text-xs mt-3 ${catalogMsg.startsWith('✓') ? 'text-emerald-700' : 'text-red-600'}`}>
+            {catalogMsg}
+          </p>
+        )}
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
