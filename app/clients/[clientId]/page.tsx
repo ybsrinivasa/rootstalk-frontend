@@ -22,6 +22,11 @@ type Client = {
    *  Replaced the previously hardcoded `https://rootstalk.in/<short_name>`
    *  which was wrong on testing (CA portal lives on rstalk-ca.eywa.farm). */
   login_url: string | null
+  // 2026-05-22 — added so the Edit modal can show the current org
+  // types as already-checked. Missing this field caused the modal
+  // to render all checkboxes unchecked → SA's "no change" save would
+  // wipe the existing tags.
+  org_type_cosh_ids?: string[]
 }
 
 // 2026-05-22: list now fetched live from Cosh `organization_types`
@@ -110,6 +115,7 @@ export default function ClientDetailPage() {
       support_phone: client.support_phone || '',
       office_phone: client.office_phone || '',
       social_links: client.social_links || {},
+      org_type_cosh_ids: client.org_type_cosh_ids || [],
     })
     setShowEdit(true)
   }
@@ -516,13 +522,19 @@ export default function ClientDetailPage() {
                       <input type="checkbox"
                         checked={(editForm.org_type_cosh_ids || []).includes(ot.cosh_id)}
                         onChange={e => {
-                          const current = editForm.org_type_cosh_ids || []
-                          setEditForm(f => ({
-                            ...f,
-                            org_type_cosh_ids: e.target.checked
-                              ? [...current, ot.cosh_id]
-                              : current.filter(x => x !== ot.cosh_id),
-                          }))
+                          const checked = e.target.checked
+                          // Functional setter — reads previous state at
+                          // commit time so rapid double-clicks don't
+                          // step on each other.
+                          setEditForm(f => {
+                            const current = f.org_type_cosh_ids || []
+                            return {
+                              ...f,
+                              org_type_cosh_ids: checked
+                                ? [...current, ot.cosh_id]
+                                : current.filter(x => x !== ot.cosh_id),
+                            }
+                          })
                         }}
                         className="w-4 h-4 rounded" />
                       <span className="text-xs text-slate-700">{ot.name}</span>
