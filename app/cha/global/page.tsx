@@ -120,6 +120,18 @@ function GlobalCHAContent() {
     return Array.from(byLineage.values())
   }, [recs])
 
+  // 2026-05-22 — version count per lineage, surfaced as "· N versions"
+  // on bundle cards when N > 1. Same hint added across the rollup
+  // sweep so the SE knows historical versions exist behind the head.
+  const versionCountByLineage = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of recs) {
+      const key = `${r.problem_group_cosh_id}::${r.area_or_plant ?? ''}`
+      m.set(key, (m.get(key) || 0) + 1)
+    }
+    return m
+  }, [recs])
+
   const filteredPgName = useMemo(
     () => problemGroups.find(p => p.cosh_id === pgFilter)?.name_en || '',
     [pgFilter, problemGroups],
@@ -227,6 +239,14 @@ function GlobalCHAContent() {
               {head.status}
             </span>
             <span className="text-xs text-slate-500">v{head.version}</span>
+            {(() => {
+              const key = `${head.problem_group_cosh_id}::${head.area_or_plant ?? ''}`
+              const count = versionCountByLineage.get(key) || 1
+              if (count <= 1) return null
+              return (
+                <span className="text-xs text-slate-400">· {count} versions</span>
+              )
+            })()}
           </div>
           <dl className="text-sm text-slate-600 space-y-1 mb-4">
             <div className="flex justify-between">

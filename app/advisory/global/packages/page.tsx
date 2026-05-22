@@ -72,6 +72,42 @@ function GlobalPackagesContent() {
 
   useEffect(() => { load() }, [cropFilter])
 
+  // 2026-05-22 lineage rollup — one row per (crop, lowercase(name)).
+  // Head precedence: DRAFT > ACTIVE > INACTIVE (most-current first).
+  // Pre-rollup the list flattened every version into its own row;
+  // testers misread same-lineage versions as duplicates. Older
+  // versions remain reachable via the detail page's Version-history
+  // disclosure.
+  const STATUS_RANK: Record<string, number> = { DRAFT: 0, ACTIVE: 1, INACTIVE: 2 }
+  interface LineageRow {
+    head: Package
+    versionCount: number
+  }
+  const lineages = useMemo<LineageRow[]>(() => {
+    const groups = new Map<string, Package[]>()
+    for (const p of packages) {
+      const key = `${p.crop_cosh_id}::${p.name.trim().toLowerCase()}`
+      const arr = groups.get(key)
+      if (arr) arr.push(p); else groups.set(key, [p])
+    }
+    const rows: LineageRow[] = []
+    for (const arr of groups.values()) {
+      const sorted = [...arr].sort((a, b) => {
+        const r = STATUS_RANK[a.status] - STATUS_RANK[b.status]
+        if (r !== 0) return r
+        if (b.version !== a.version) return b.version - a.version
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      })
+      rows.push({ head: sorted[0], versionCount: arr.length })
+    }
+    rows.sort((a, b) => {
+      const diff = new Date(b.head.created_at).getTime() - new Date(a.head.created_at).getTime()
+      if (diff !== 0) return diff
+      return a.head.name.localeCompare(b.head.name)
+    })
+    return rows
+  }, [packages])
+
   const cropNameById = useMemo(() => {
     const m: Record<string, string> = {}
     for (const c of coshCrops) m[c.cosh_id] = c.name_en
@@ -151,7 +187,7 @@ function GlobalPackagesContent() {
 
       {loading ? (
         <div className="bg-white rounded-2xl p-10 text-center text-slate-400 border border-slate-100">Loading…</div>
-      ) : packages.length === 0 ? (
+      ) : lineages.length === 0 ? (
         <div className="bg-white rounded-2xl p-12 text-center border border-dashed border-slate-200">
           <p className="text-slate-600 font-medium">
             {cropFilter ? `No Global Packages for ${activeCropName} yet` : 'No global packages yet'}
@@ -177,11 +213,17 @@ function GlobalPackagesContent() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {packages.map(pkg => (
+              {lineages.map(({ head: pkg, versionCount }) => (
                 <tr key={pkg.id} className="hover:bg-slate-50">
                   <td className="px-5 py-3.5">
                     <Link href={`/advisory/global/${pkg.id}`}
                       className="font-medium text-slate-800 hover:text-blue-600">{pkg.name}</Link>
+                    <span className="text-xs text-slate-400 ml-2">v{pkg.version}</span>
+                    {versionCount > 1 && (
+                      <span className="text-xs text-slate-400 ml-1.5">
+                        · {versionCount} versions
+                      </span>
+                    )}
                     {pkg.description && (
                       <p className="text-xs text-slate-400 mt-0.5 truncate max-w-xs">{pkg.description}</p>
                     )}
