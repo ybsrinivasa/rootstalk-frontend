@@ -794,6 +794,25 @@ export default function GlobalPackageDetailPage() {
     }
   }
 
+  // Editing is allowed only on DRAFT rows. ACTIVE / INACTIVE rows
+  // are historical snapshots — the user must clone-to-draft from
+  // the banner first. Prior to this gate, the page rendered the
+  // full editor regardless of status; users would type for an hour
+  // then hit a 422 at Publish/Save time ("not in DRAFT state").
+  // 2026-05-21 fix: disable every edit trigger up-front and wrap
+  // the editable body in a fieldset so the visual state matches.
+  //
+  // Hook MUST sit above the `if (!pkg) return …` early return —
+  // moving it below violates Rules of Hooks (the hook is skipped
+  // on first render while pkg is null, then runs once pkg arrives,
+  // and React throws #310 + breaks hydration). 2026-05-22 fix
+  // after the renderer-crash bug.
+  const editorReadOnly = pkg ? pkg.status !== 'DRAFT' : true
+  const { tryEdit, GuardModal } = useReadOnlyGuard({
+    isReadOnly: editorReadOnly,
+    statusLabel: pkg?.status?.toLowerCase() || 'published',
+  })
+
   if (!pkg) return <AdminLayout><div className="pt-20 text-center text-slate-400">Loading…</div></AdminLayout>
 
   // Batch 39L-b — read-only banner state. The detail page renders
@@ -803,18 +822,6 @@ export default function GlobalPackageDetailPage() {
   // directing them to clone-to-draft (or continue an existing draft).
   const existingDraft = lineage.find(r => r.status === 'DRAFT' && r.id !== pkg?.id) || null
   const nextVersion = pkg ? (pkg.published_at == null ? pkg.version : Math.max(...lineage.map(r => r.version), pkg.version) + 1) : 0
-  // Editing is allowed only on DRAFT rows. ACTIVE / INACTIVE rows
-  // are historical snapshots — the user must clone-to-draft from
-  // the banner first. Prior to this gate, the page rendered the
-  // full editor regardless of status; users would type for an hour
-  // then hit a 422 at Publish/Save time ("not in DRAFT state").
-  // 2026-05-21 fix: disable every edit trigger up-front and wrap
-  // the editable body in a fieldset so the visual state matches.
-  const editorReadOnly = pkg ? pkg.status !== 'DRAFT' : true
-  const { tryEdit, GuardModal } = useReadOnlyGuard({
-    isReadOnly: editorReadOnly,
-    statusLabel: pkg?.status?.toLowerCase() || 'published',
-  })
   return (
     <AdminLayout>
       <div className="max-w-4xl space-y-6">
