@@ -1283,6 +1283,20 @@ export default function GlobalPackageDetailPage() {
             return { from_value: tl.from_value, to_value: tl.to_value }
           })()}
           pipe={{ pipe: 'CCA_GLOBAL', parentId: id }}
+          usedCommonNames={(() => {
+            // Rule 1 (2026-05-22) — peer PESTICIDE/FERTILIZER CNs in
+            // this Timeline. Backend rejects duplicates; UI greys
+            // them out pre-emptively.
+            if (!showAddPractice) return new Set<string>()
+            const peers = practiceMap[showAddPractice] || []
+            const out = new Set<string>()
+            for (const p of peers) {
+              if (p.l1_type !== 'PESTICIDE' && p.l1_type !== 'FERTILIZER') continue
+              const cn = (p.elements || []).find(e => e.element_type === 'COMMON_NAME')?.cosh_ref
+              if (cn) out.add(cn)
+            }
+            return out
+          })()}
           onClose={() => {
             setShowAddPractice(null)
             setEditingPractice(null)
