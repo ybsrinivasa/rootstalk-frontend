@@ -25,13 +25,8 @@ const STATUS_COLOUR: Record<string, string> = {
 }
 
 // V1 hardcoded — Cosh hasn't shipped a start-date-label Connect yet.
-// Same list the CA portal uses; replace with a /cca/start-date-labels
-// fetch once Cosh ships it.
-const START_DATE_LABELS = [
-  { cosh_id: 'label:sowing_date',   name: 'Sowing Date' },
-  { cosh_id: 'label:planting_date', name: 'Planting Date' },
-  { cosh_id: 'label:pruning_date',  name: 'Pruning Date' },
-]
+// 2026-05-22: live Cosh list from `/cosh/options/start-date-names`.
+interface StartDateOption { cosh_id: string; name: string }
 
 function GlobalPackagesContent() {
   const router = useRouter()
@@ -48,9 +43,16 @@ function GlobalPackagesContent() {
   const [form, setForm] = useState({
     name: '', crop_cosh_id: '', package_type: 'ANNUAL',
     duration_days: '120',
-    start_date_label_cosh_id: 'label:sowing_date',
+    start_date_label_cosh_id: '',
     description: '',
   })
+  const [startDateLabels, setStartDateLabels] = useState<StartDateOption[]>([])
+
+  useEffect(() => {
+    api.get<StartDateOption[]>(`/cosh/options/start-date-names`)
+      .then(r => setStartDateLabels(r.data))
+      .catch(() => setStartDateLabels([]))
+  }, [])
 
   const load = () => {
     setLoading(true)
@@ -126,7 +128,7 @@ function GlobalPackagesContent() {
       crop_cosh_id: cropFilter || '',  // pre-fill from chip
       package_type: 'ANNUAL',
       duration_days: '120',
-      start_date_label_cosh_id: 'label:sowing_date',
+      start_date_label_cosh_id: startDateLabels[0]?.cosh_id || '',
       description: '',
     })
     setError('')
@@ -148,7 +150,7 @@ function GlobalPackagesContent() {
       setForm({
         name: '', crop_cosh_id: '', package_type: 'ANNUAL',
         duration_days: '120',
-        start_date_label_cosh_id: 'label:sowing_date',
+        start_date_label_cosh_id: startDateLabels[0]?.cosh_id || '',
         description: '',
       })
       load()
@@ -290,7 +292,10 @@ function GlobalPackagesContent() {
                 <select value={form.start_date_label_cosh_id}
                   onChange={e => setForm(f => ({ ...f, start_date_label_cosh_id: e.target.value }))}
                   className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-                  {START_DATE_LABELS.map(l => (
+                  {!form.start_date_label_cosh_id && (
+                    <option value="">— pick a label —</option>
+                  )}
+                  {startDateLabels.map(l => (
                     <option key={l.cosh_id} value={l.cosh_id}>{l.name}</option>
                   ))}
                 </select>

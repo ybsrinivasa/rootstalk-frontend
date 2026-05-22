@@ -281,12 +281,20 @@ export default function GlobalPackageDetailPage() {
   const [showEdit, setShowEdit] = useState(false)
   const [editForm, setEditForm] = useState({
     name: '', duration_days: '120',
-    start_date_label_cosh_id: 'label:sowing_date',
+    start_date_label_cosh_id: '',
     description: '',
     status: 'DRAFT',  // Batch 28: ACTIVE / INACTIVE toggle; DRAFT shown read-only.
   })
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState('')
+  // 2026-05-22: live Cosh list from `/cosh/options/start-date-names`.
+  const [startDateLabels, setStartDateLabels] = useState<{ cosh_id: string; name: string }[]>([])
+
+  useEffect(() => {
+    api.get<{ cosh_id: string; name: string }[]>(`/cosh/options/start-date-names`)
+      .then(r => setStartDateLabels(r.data))
+      .catch(() => setStartDateLabels([]))
+  }, [])
 
   // Parameters & Variables (Batch 9, 2026-05-11). Moved into its
   // own modal 2026-05-11 — full editor is too heavy to share the
@@ -583,18 +591,12 @@ export default function GlobalPackageDetailPage() {
     loadPushStatus()
   }
 
-  const START_DATE_LABELS = [
-    { cosh_id: 'label:sowing_date',   name: 'Sowing Date' },
-    { cosh_id: 'label:planting_date', name: 'Planting Date' },
-    { cosh_id: 'label:pruning_date',  name: 'Pruning Date' },
-  ]
-
   function openEdit() {
     if (!pkg) return
     setEditForm({
       name: pkg.name,
       duration_days: String(pkg.duration_days),
-      start_date_label_cosh_id: pkg.start_date_label_cosh_id || 'label:sowing_date',
+      start_date_label_cosh_id: pkg.start_date_label_cosh_id || startDateLabels[0]?.cosh_id || '',
       description: pkg.description || '',
       status: pkg.status,
     })
@@ -1450,7 +1452,10 @@ export default function GlobalPackageDetailPage() {
                   <select value={editForm.start_date_label_cosh_id}
                     onChange={e => setEditForm(f => ({ ...f, start_date_label_cosh_id: e.target.value }))}
                     className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-                    {START_DATE_LABELS.map(l => (
+                    {!editForm.start_date_label_cosh_id && (
+                      <option value="">— pick a label —</option>
+                    )}
+                    {startDateLabels.map(l => (
                       <option key={l.cosh_id} value={l.cosh_id}>{l.name}</option>
                     ))}
                   </select>

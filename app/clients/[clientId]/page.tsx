@@ -24,16 +24,9 @@ type Client = {
   login_url: string | null
 }
 
-const ORG_TYPES = [
-  { id: 'org_type_seed_companies', label: 'Seed Companies' },
-  { id: 'org_type_pesticide_mfr', label: 'Pesticide Manufacturer' },
-  { id: 'org_type_fertiliser_mfr', label: 'Fertiliser Manufacturer' },
-  { id: 'org_type_agri_university', label: 'Agricultural University / KVK' },
-  { id: 'org_type_govt_dept', label: 'Government Line Department' },
-  { id: 'org_type_nonprofit', label: 'Not-for-profit' },
-  { id: 'org_type_private_company', label: 'Private Company' },
-  { id: 'org_type_research_inst', label: 'Research Institution' },
-]
+// 2026-05-22: list now fetched live from Cosh `organization_types`
+// Core via `/cosh/options/organization-types`.
+interface OrgTypeOption { cosh_id: string; name: string }
 
 export default function ClientDetailPage() {
   const { clientId } = useParams()
@@ -56,8 +49,15 @@ export default function ClientDetailPage() {
   const [showCMAssign, setShowCMAssign] = useState(false)
   const [cmForm, setCmForm] = useState({ cm_user_id: '', rights: 'EDIT' })
   const [savingCM, setSavingCM] = useState(false)
+  const [orgTypes, setOrgTypes] = useState<OrgTypeOption[]>([])
 
   useEffect(() => { load() }, [clientId])
+
+  useEffect(() => {
+    api.get<OrgTypeOption[]>(`/cosh/options/organization-types`)
+      .then(r => setOrgTypes(r.data))
+      .catch(() => setOrgTypes([]))
+  }, [])
 
   async function load() {
     try {
@@ -511,21 +511,21 @@ export default function ClientDetailPage() {
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-2">Organisation Types</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {ORG_TYPES.map(ot => (
-                    <label key={ot.id} className="flex items-center gap-2 cursor-pointer">
+                  {orgTypes.map(ot => (
+                    <label key={ot.cosh_id} className="flex items-center gap-2 cursor-pointer">
                       <input type="checkbox"
-                        checked={(editForm.org_type_cosh_ids || []).includes(ot.id)}
+                        checked={(editForm.org_type_cosh_ids || []).includes(ot.cosh_id)}
                         onChange={e => {
                           const current = editForm.org_type_cosh_ids || []
                           setEditForm(f => ({
                             ...f,
                             org_type_cosh_ids: e.target.checked
-                              ? [...current, ot.id]
-                              : current.filter(x => x !== ot.id),
+                              ? [...current, ot.cosh_id]
+                              : current.filter(x => x !== ot.cosh_id),
                           }))
                         }}
                         className="w-4 h-4 rounded" />
-                      <span className="text-xs text-slate-700">{ot.label}</span>
+                      <span className="text-xs text-slate-700">{ot.name}</span>
                     </label>
                   ))}
                 </div>

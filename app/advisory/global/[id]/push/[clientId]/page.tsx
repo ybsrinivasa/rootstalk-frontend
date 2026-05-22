@@ -63,12 +63,8 @@ interface PortalUser {
   status: string
 }
 
-// Same hardcoded set as the Global edit/create modals.
-const START_DATE_LABELS = [
-  { cosh_id: 'label:sowing_date',   name: 'Sowing Date' },
-  { cosh_id: 'label:planting_date', name: 'Planting Date' },
-  { cosh_id: 'label:pruning_date',  name: 'Pruning Date' },
-]
+// 2026-05-22: live Cosh list from `/cosh/options/start-date-names`.
+interface StartDateOption { cosh_id: string; name: string }
 
 interface StructuredError {
   code?: string
@@ -110,7 +106,14 @@ export default function PushToClientPage() {
   // Form state.
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [startDateLabel, setStartDateLabel] = useState('label:sowing_date')
+  const [startDateLabel, setStartDateLabel] = useState('')
+  const [startDateLabels, setStartDateLabels] = useState<StartDateOption[]>([])
+
+  useEffect(() => {
+    api.get<StartDateOption[]>(`/cosh/options/start-date-names`)
+      .then(r => setStartDateLabels(r.data))
+      .catch(() => setStartDateLabels([]))
+  }, [])
   const [selectedLocations, setSelectedLocations] = useState<string[]>([])      // location row ids
   const [pvSelections, setPvSelections] = useState<Record<string, string>>({})   // parameter_id → variable_id
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([])           // user ids
@@ -139,7 +142,8 @@ export default function PushToClientPage() {
       // Ram will almost always tweak Name for the client.
       setName(pkgRes.data.name)
       setDescription(pkgRes.data.description || '')
-      setStartDateLabel(pkgRes.data.start_date_label_cosh_id || 'label:sowing_date')
+      // Inherit from Global; if absent, the SE picks via the dropdown.
+      setStartDateLabel(pkgRes.data.start_date_label_cosh_id || '')
     }).catch(() => {
       if (!cancelled) setLoadError('Failed to load. Check that this Global is published and that you have edit rights on this client.')
     })
@@ -345,7 +349,10 @@ export default function PushToClientPage() {
             <h2 className="font-semibold text-slate-800 text-sm">Start date label *</h2>
             <select value={startDateLabel} onChange={e => setStartDateLabel(e.target.value)}
               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
-              {START_DATE_LABELS.map(l => (
+              {!startDateLabel && (
+                <option value="">— pick a label —</option>
+              )}
+              {startDateLabels.map(l => (
                 <option key={l.cosh_id} value={l.cosh_id}>{l.name}</option>
               ))}
             </select>
