@@ -365,10 +365,14 @@ export default function GlobalPGDetailPage() {
 
   async function handleDeletePractice(tlId: string, practiceId: string) {
     if (!confirm('Delete this practice?')) return
-    await api.delete(
-      `/advisory/global/pg-recommendations/${pgId}/timelines/${tlId}/practices/${practiceId}`,
-    )
-    await loadTimelines()
+    try {
+      await api.delete(
+        `/advisory/global/pg-recommendations/${pgId}/timelines/${tlId}/practices/${practiceId}`,
+      )
+      await loadTimelines()
+    } catch (err: unknown) {
+      alert(extractErrorMessage(err, 'Failed to delete practice.'))
+    }
   }
 
   async function deleteTL(tl: PGTimeline) {

@@ -575,8 +575,12 @@ export default function GlobalPackageDetailPage() {
   }
   async function handleDeletePractice(tlId: string, practiceId: string) {
     if (!confirm('Delete this practice?')) return
-    await api.delete(`/advisory/global/packages/${id}/timelines/${tlId}/practices/${practiceId}`)
-    setPracticeMap(m => ({ ...m, [tlId]: (m[tlId] || []).filter(p => p.id !== practiceId) }))
+    try {
+      await api.delete(`/advisory/global/packages/${id}/timelines/${tlId}/practices/${practiceId}`)
+      setPracticeMap(m => ({ ...m, [tlId]: (m[tlId] || []).filter(p => p.id !== practiceId) }))
+    } catch (err: unknown) {
+      alert(extractErrorMessage(err, 'Failed to delete practice.'))
+    }
   }
 
   const loadPushStatus = () =>
