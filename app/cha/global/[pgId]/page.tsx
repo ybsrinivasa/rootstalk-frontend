@@ -714,7 +714,8 @@ export default function GlobalPGDetailPage() {
           open={!!showAddPractice}
           mode={editingPractice ? 'edit' : 'create'}
           timelineId={showAddPractice || ''}
-          cropCoshId={''} /* PG protocols aren't crop-bound; spec applies plant-wise extras only when crop measure says so */
+          cropCoshId={''} /* PG protocols aren't crop-bound */
+          areaOrPlant={(pg.area_or_plant === 'PLANT_WISE' || pg.area_or_plant === 'AREA_WISE') ? pg.area_or_plant : null}
           existingPractice={editingPractice?.practice as ExistingPractice | undefined}
           contextSubtitle={(() => {
             if (!showAddPractice) return undefined
