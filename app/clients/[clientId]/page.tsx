@@ -198,6 +198,10 @@ export default function ClientDetailPage() {
           { ACTIVE: 'bg-emerald-100 text-emerald-700', PENDING_REVIEW: 'bg-amber-100 text-amber-700',
             INACTIVE: 'bg-slate-100 text-slate-500', REJECTED: 'bg-red-100 text-red-600' }[client.status] || ''
         }`}>{client.status.replace('_', ' ')}</span>
+        <button onClick={() => router.push(`/clients/${clientId}/subscriptions`)}
+          className="text-xs px-3 py-1 border border-emerald-200 text-emerald-700 rounded-lg hover:bg-emerald-50 font-medium">
+          Subscriptions →
+        </button>
         {/* Login URL — item #6 */}
         {client.status === 'ACTIVE' && (
           <a href={loginUrl} target="_blank" rel="noopener noreferrer"
