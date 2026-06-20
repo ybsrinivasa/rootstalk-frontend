@@ -114,14 +114,15 @@ export default function VolumeCalculationsPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['L2 Practice', 'Application Method', 'Brand Unit', 'Dosage Unit', 'Formula', 'Actions'].map(h => (
+                {['L2 Practice', 'Application Method', 'Brand Unit', 'Dosage Unit', 'Formula'].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide sticky right-0 bg-slate-50 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {filtered.map(f => (
-                <tr key={f.id} className="hover:bg-slate-50">
+                <tr key={f.id} className="group hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-800">{f.l2_practice}</td>
                   <td className="px-4 py-3 text-slate-600">{f.application_method}</td>
                   <td className="px-4 py-3 text-slate-500 font-mono text-xs">{f.brand_unit}</td>
@@ -129,7 +130,7 @@ export default function VolumeCalculationsPage() {
                   <td className="px-4 py-3 font-mono text-xs text-slate-700">
                     <div className="max-w-[20rem] truncate" title={f.formula}>{f.formula}</div>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
+                  <td className="px-4 py-3 whitespace-nowrap sticky right-0 bg-white group-hover:bg-slate-50 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                     <div className="flex gap-2">
                       <button onClick={() => openEdit(f)}
                         className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50">
