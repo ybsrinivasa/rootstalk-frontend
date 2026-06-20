@@ -8,14 +8,18 @@ interface Formula {
   brand_unit: string; dosage_unit: string; formula: string; status: string
 }
 
+type Tab = 'active' | 'inactive'
+
 export default function VolumeCalculationsPage() {
   const [formulas, setFormulas] = useState<Formula[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [tab, setTab] = useState<Tab>('active')
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState<Formula | null>(null)
   const [form, setForm] = useState({ measure: '', l2_practice: '', application_method: '', brand_unit: '', dosage_unit: '', formula: '' })
   const [saving, setSaving] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
 
   const load = () =>
     api.get<Formula[]>('/admin/volume-formulas')
@@ -45,10 +49,26 @@ export default function VolumeCalculationsPage() {
     } finally { setSaving(false) }
   }
 
-  const filtered = formulas.filter(f =>
-    !search || f.l2_practice.toLowerCase().includes(search.toLowerCase()) ||
-    f.application_method.toLowerCase().includes(search.toLowerCase())
-  )
+  async function toggleStatus(f: Formula) {
+    const next = f.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
+    const verb = next === 'INACTIVE' ? 'Deactivate' : 'Activate'
+    if (!confirm(`${verb} the ${f.l2_practice} · ${f.application_method} formula?`)) return
+    setTogglingId(f.id)
+    try {
+      await api.put(`/admin/volume-formulas/${f.id}`, { status: next })
+      load()
+    } finally { setTogglingId(null) }
+  }
+
+  const activeCount = formulas.filter(f => f.status === 'ACTIVE').length
+  const inactiveCount = formulas.length - activeCount
+
+  const filtered = formulas
+    .filter(f => tab === 'active' ? f.status === 'ACTIVE' : f.status !== 'ACTIVE')
+    .filter(f =>
+      !search || f.l2_practice.toLowerCase().includes(search.toLowerCase()) ||
+      f.application_method.toLowerCase().includes(search.toLowerCase())
+    )
 
   return (
     <AdminLayout>
@@ -68,6 +88,19 @@ export default function VolumeCalculationsPage() {
         </button>
       </div>
 
+      <div className="mb-4 flex gap-2 border-b border-slate-200">
+        {([['active', `Active (${activeCount})`], ['inactive', `Inactive (${inactiveCount})`]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+              tab === k
+                ? 'border-green-700 text-green-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="mb-4">
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search by practice type or application method…"
@@ -81,7 +114,7 @@ export default function VolumeCalculationsPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['L2 Practice', 'Application Method', 'Brand Unit', 'Dosage Unit', 'Formula', 'Status', ''].map(h => (
+                {['L2 Practice', 'Application Method', 'Brand Unit', 'Dosage Unit', 'Formula', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -95,18 +128,27 @@ export default function VolumeCalculationsPage() {
                   <td className="px-4 py-3 text-slate-500 font-mono text-xs">{f.dosage_unit}</td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-700 max-w-xs truncate">{f.formula}</td>
                   <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${f.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                      {f.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <button onClick={() => openEdit(f)}
-                      className="text-xs text-blue-600 hover:underline">Edit</button>
+                    <div className="flex gap-2">
+                      <button onClick={() => openEdit(f)}
+                        className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50">
+                        Edit
+                      </button>
+                      <button onClick={() => toggleStatus(f)} disabled={togglingId === f.id}
+                        className={`px-2.5 py-1 text-xs font-medium rounded-md border disabled:opacity-50 ${
+                          f.status === 'ACTIVE'
+                            ? 'border-amber-200 text-amber-700 hover:bg-amber-50'
+                            : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                        }`}>
+                        {togglingId === f.id ? '…' : (f.status === 'ACTIVE' ? 'Deactivate' : 'Activate')}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-12 text-slate-400">No formulas found</td></tr>
+                <tr><td colSpan={6} className="text-center py-12 text-slate-400">
+                  {tab === 'active' ? 'No active formulas found' : 'No inactive formulas'}
+                </td></tr>
               )}
             </tbody>
           </table>
