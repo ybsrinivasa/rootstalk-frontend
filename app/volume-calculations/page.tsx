@@ -8,6 +8,8 @@ interface Formula {
   brand_unit: string; dosage_unit: string; formula: string; status: string
 }
 
+interface CoshOption { cosh_id: string; name: string }
+
 type Tab = 'active' | 'inactive'
 
 export default function VolumeCalculationsPage() {
@@ -21,12 +23,34 @@ export default function VolumeCalculationsPage() {
   const [saving, setSaving] = useState(false)
   const [togglingId, setTogglingId] = useState<string | null>(null)
 
+  const [allUnits, setAllUnits] = useState<CoshOption[]>([])
+  const [methodOptions, setMethodOptions] = useState<CoshOption[]>([])
+  const [loadingMethods, setLoadingMethods] = useState(false)
+
   const load = () =>
     api.get<Formula[]>('/admin/volume-formulas')
       .then(r => setFormulas(r.data))
       .finally(() => setLoading(false))
 
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    api.get<CoshOption[]>('/cosh/options/all-units')
+      .then(r => setAllUnits(r.data))
+      .catch(() => setAllUnits([]))
+  }, [])
+
+  useEffect(() => {
+    if (!showCreate || !form.l2_practice) { setMethodOptions([]); return }
+    setLoadingMethods(true)
+    const handle = setTimeout(() => {
+      api.get<CoshOption[]>(`/cosh/options/application-methods?l2=${encodeURIComponent(form.l2_practice)}`)
+        .then(r => setMethodOptions(r.data))
+        .catch(() => setMethodOptions([]))
+        .finally(() => setLoadingMethods(false))
+    }, 300)
+    return () => clearTimeout(handle)
+  }, [showCreate, form.l2_practice])
 
   function openEdit(f: Formula) {
     setEditing(f)
@@ -165,11 +189,28 @@ export default function VolumeCalculationsPage() {
             <h2 className="font-bold text-slate-900 text-lg mb-4">{editing ? 'Edit Formula' : 'Add Formula'}</h2>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <FormField label="Measure" value={form.measure} onChange={v => setForm(f => ({ ...f, measure: v }))} placeholder="AREA" />
-                <FormField label="L2 Practice" value={form.l2_practice} onChange={v => setForm(f => ({ ...f, l2_practice: v }))} placeholder="Fungicide" />
-                <FormField label="Application Method" value={form.application_method} onChange={v => setForm(f => ({ ...f, application_method: v }))} placeholder="Foliar" />
-                <FormField label="Brand Unit" value={form.brand_unit} onChange={v => setForm(f => ({ ...f, brand_unit: v }))} placeholder="mL/pump" />
-                <FormField label="Dosage Unit" value={form.dosage_unit} onChange={v => setForm(f => ({ ...f, dosage_unit: v }))} placeholder="mL/L" />
+                <FormField label="Measure" value={form.measure} onChange={v => setForm(f => ({ ...f, measure: v }))} placeholder="AREA_WISE" />
+                <FormField label="L2 Practice" value={form.l2_practice} onChange={v => setForm(f => ({ ...f, l2_practice: v }))} placeholder="CHEMICAL_PESTICIDES" />
+                <SelectField
+                  label="Application Method"
+                  value={form.application_method}
+                  options={methodOptions}
+                  loading={loadingMethods}
+                  onChange={v => setForm(f => ({ ...f, application_method: v }))}
+                  emptyHint={form.l2_practice ? 'No methods for this L2' : 'Type an L2 Practice first'}
+                />
+                <SelectField
+                  label="Brand Unit"
+                  value={form.brand_unit}
+                  options={allUnits}
+                  onChange={v => setForm(f => ({ ...f, brand_unit: v }))}
+                />
+                <SelectField
+                  label="Dosage Unit"
+                  value={form.dosage_unit}
+                  options={allUnits}
+                  onChange={v => setForm(f => ({ ...f, dosage_unit: v }))}
+                />
               </div>
               <FormField label="Formula expression" value={form.formula} onChange={v => setForm(f => ({ ...f, formula: v }))} placeholder="Dosage * Total_area / Concentration" />
               <p className="text-xs text-slate-400">Variables available: Dosage, Total_area, Concentration, Volume_water</p>
@@ -197,6 +238,37 @@ function FormField({ label, value, onChange, placeholder }: { label: string; val
       <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
       <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none" />
+    </div>
+  )
+}
+
+function SelectField({
+  label, value, options, onChange, loading, emptyHint,
+}: {
+  label: string
+  value: string
+  options: { cosh_id: string; name: string }[]
+  onChange: (v: string) => void
+  loading?: boolean
+  emptyHint?: string
+}) {
+  // The current value may not be in options (legacy free-text row); show it
+  // anyway so the row's saved value is preserved.
+  const valueInOptions = options.some(o => o.name === value)
+  return (
+    <div>
+      <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
+      <select value={value} onChange={e => onChange(e.target.value)}
+        disabled={loading}
+        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none disabled:opacity-50">
+        <option value="">{loading ? 'Loading…' : (options.length === 0 ? (emptyHint || '— none available —') : '— select —')}</option>
+        {!valueInOptions && value && (
+          <option value={value}>{value} (legacy)</option>
+        )}
+        {options.map(o => (
+          <option key={o.cosh_id} value={o.name}>{o.name}</option>
+        ))}
+      </select>
     </div>
   )
 }
