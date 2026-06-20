@@ -229,6 +229,15 @@ export function PracticeFormModal({
   const [uploadingByField, setUploadingByField] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // 2026-06-20 — Authoring-time volume-formula combination check.
+  // Mirror of the CA-portal hook (rootstalk-client-portal:
+  // PracticeFormModal). Fires only after both APPLICATION_METHOD and
+  // DOSAGE_UNIT are populated, debounced 400ms. Verdict drives the
+  // yellow inline banner above the element form. Save is never
+  // blocked. See `app/services/volume_formula_validator.py`.
+  const [volumeWarning, setVolumeWarning] = useState<
+    { verdict: string; message: string | null } | null
+  >(null)
 
   // Load taxonomy on mount.
   useEffect(() => {
@@ -372,6 +381,42 @@ export function PracticeFormModal({
     if (pending.length === 0) return
     Promise.all(pending).then(() => setOptionsByField(prev => ({ ...prev, ...fetched })))
   }, [practiceForm.l2_type, l2Spec, cropCoshId])
+
+  // 2026-06-20 — Volume-formula combination check (mirror of
+  // CA-portal modal). Watches APPLICATION_METHOD + DOSAGE_UNIT
+  // cosh_ref values. Debounce 400ms before hitting backend.
+  useEffect(() => {
+    const method = elementValues['APPLICATION_METHOD'] || ''
+    const dosageUnit = elementValues['DOSAGE_UNIT'] || ''
+    if (!practiceForm.l2_type || !timelineId || !method || !dosageUnit) {
+      setVolumeWarning(null)
+      return
+    }
+    const handle = setTimeout(async () => {
+      try {
+        const qs = new URLSearchParams({
+          timeline_id: timelineId,
+          l2: practiceForm.l2_type,
+          method,
+          dosage_unit: dosageUnit,
+        })
+        const { data } = await api.get<{ verdict: string; message: string | null }>(
+          `/practice-taxonomy/check-volume-formula?${qs}`,
+        )
+        setVolumeWarning(
+          data.verdict === 'ok' || data.verdict === 'l2_unseeded' ? null : data
+        )
+      } catch {
+        setVolumeWarning(null)
+      }
+    }, 400)
+    return () => clearTimeout(handle)
+  }, [
+    practiceForm.l2_type,
+    timelineId,
+    elementValues['APPLICATION_METHOD'],
+    elementValues['DOSAGE_UNIT'],
+  ])
 
   // Brand cascade — Common Name → MFR / TN bidirectional + F / a.i.
   const commonName = elementValues['COMMON_NAME'] || ''
@@ -627,6 +672,26 @@ export function PracticeFormModal({
               <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
                 Element values
               </p>
+              {/* 2026-06-20 — Volume-formula warning. Mirror of
+                  CA-portal banner; unsupported_combo is amber +
+                  strong, method_unseeded softer. */}
+              {volumeWarning && (
+                <div className={`rounded-md border px-3 py-2 text-xs ${
+                  volumeWarning.verdict === 'unsupported_combo'
+                    ? 'bg-amber-50 border-amber-300 text-amber-900'
+                    : 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                }`}>
+                  <p className="font-semibold mb-0.5">
+                    {volumeWarning.verdict === 'unsupported_combo'
+                      ? '⚠ Dosage unit & application method combination unsupported'
+                      : '⚠ Application method has no volume formulas'}
+                  </p>
+                  <p>{volumeWarning.message}</p>
+                  <p className="text-[11px] mt-1 opacity-75">
+                    You can still save this practice. The dealer will enter quantities manually at order time.
+                  </p>
+                </div>
+              )}
               {l2Spec.map(field => {
                 const variant = elementInputVariant(field.source)
                 if (variant === 'auto') {
