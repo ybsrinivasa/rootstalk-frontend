@@ -24,6 +24,7 @@ export default function VolumeCalculationsPage() {
   const [togglingId, setTogglingId] = useState<string | null>(null)
 
   const [allUnits, setAllUnits] = useState<CoshOption[]>([])
+  const [allMethods, setAllMethods] = useState<CoshOption[]>([])
   const [methodOptions, setMethodOptions] = useState<CoshOption[]>([])
   const [loadingMethods, setLoadingMethods] = useState(false)
 
@@ -38,7 +39,21 @@ export default function VolumeCalculationsPage() {
     api.get<CoshOption[]>('/cosh/options/all-units')
       .then(r => setAllUnits(r.data))
       .catch(() => setAllUnits([]))
+    api.get<CoshOption[]>('/cosh/options/all-application-methods')
+      .then(r => setAllMethods(r.data))
+      .catch(() => setAllMethods([]))
   }, [])
+
+  const unitNames = new Set(allUnits.map(u => u.name))
+  const methodNames = new Set(allMethods.map(m => m.name))
+
+  function legacyFields(f: Formula): string[] {
+    const bad: string[] = []
+    if (allMethods.length > 0 && f.application_method && !methodNames.has(f.application_method)) bad.push('Application Method')
+    if (allUnits.length > 0 && f.brand_unit && !unitNames.has(f.brand_unit)) bad.push('Brand Unit')
+    if (allUnits.length > 0 && f.dosage_unit && !unitNames.has(f.dosage_unit)) bad.push('Dosage Unit')
+    return bad
+  }
 
   useEffect(() => {
     if (!showCreate || !form.l2_practice) { setMethodOptions([]); return }
@@ -129,6 +144,9 @@ export default function VolumeCalculationsPage() {
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search by practice type or application method…"
           className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30" />
+        <p className="text-xs text-slate-400 mt-1.5">
+          <span className="text-blue-600 font-bold">*</span> marks rows whose Method / Brand Unit / Dosage Unit isn't in the current Cosh list — usually a renamed or retired Cosh value.
+        </p>
       </div>
 
       {loading ? (
@@ -145,12 +163,25 @@ export default function VolumeCalculationsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {filtered.map(f => (
+              {filtered.map(f => {
+                const bad = legacyFields(f)
+                return (
                 <tr key={f.id} className="group hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800">{f.l2_practice}</td>
-                  <td className="px-4 py-3 text-slate-600">{f.application_method}</td>
-                  <td className="px-4 py-3 text-slate-500 font-mono text-xs">{f.brand_unit}</td>
-                  <td className="px-4 py-3 text-slate-500 font-mono text-xs">{f.dosage_unit}</td>
+                  <td className="px-4 py-3 font-medium text-slate-800">
+                    <span className="inline-flex items-center gap-1.5">
+                      {bad.length > 0 && (
+                        <span
+                          title={`Legacy value — not in current Cosh list: ${bad.join(', ')}`}
+                          className="text-blue-600 font-bold cursor-help select-none">
+                          *
+                        </span>
+                      )}
+                      {f.l2_practice}
+                    </span>
+                  </td>
+                  <td className={`px-4 py-3 ${bad.includes('Application Method') ? 'text-blue-700' : 'text-slate-600'}`}>{f.application_method}</td>
+                  <td className={`px-4 py-3 font-mono text-xs ${bad.includes('Brand Unit') ? 'text-blue-700' : 'text-slate-500'}`}>{f.brand_unit}</td>
+                  <td className={`px-4 py-3 font-mono text-xs ${bad.includes('Dosage Unit') ? 'text-blue-700' : 'text-slate-500'}`}>{f.dosage_unit}</td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-700">
                     <div className="max-w-[20rem] truncate" title={f.formula}>{f.formula}</div>
                   </td>
@@ -171,7 +202,7 @@ export default function VolumeCalculationsPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+              )})}
               {filtered.length === 0 && (
                 <tr><td colSpan={6} className="text-center py-12 text-slate-400">
                   {tab === 'active' ? 'No active formulas found' : 'No inactive formulas'}
