@@ -110,7 +110,7 @@ export default function VolumeCalculationsPage() {
       {loading ? (
         <div className="h-48 bg-gray-100 rounded-xl animate-pulse" />
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -126,8 +126,10 @@ export default function VolumeCalculationsPage() {
                   <td className="px-4 py-3 text-slate-600">{f.application_method}</td>
                   <td className="px-4 py-3 text-slate-500 font-mono text-xs">{f.brand_unit}</td>
                   <td className="px-4 py-3 text-slate-500 font-mono text-xs">{f.dosage_unit}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-slate-700 max-w-xs truncate">{f.formula}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 font-mono text-xs text-slate-700">
+                    <div className="max-w-[20rem] truncate" title={f.formula}>{f.formula}</div>
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <div className="flex gap-2">
                       <button onClick={() => openEdit(f)}
                         className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50">
