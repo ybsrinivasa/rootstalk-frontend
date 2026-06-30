@@ -534,6 +534,11 @@ export function PracticeFormModal({
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       setElementValue(fieldName, data.url)
+      // 2026-06-30 — Clear stale validation error from a prior submit
+      // that fired before the upload completed (the value was empty,
+      // backend returned MISSING_MANDATORY). Now that the URL has
+      // landed, the SE shouldn't keep staring at a misleading error.
+      setError('')
     } finally {
       setUploadingByField(s => ({ ...s, [fieldName]: false }))
     }
@@ -587,7 +592,19 @@ export function PracticeFormModal({
       onSaved()
       onClose()
     } catch (err: unknown) {
-      setError(extractErrorMessage(err, mode === 'edit' ? 'Failed to update practice.' : 'Failed to add practice.'))
+      // 2026-06-30 — For L2-element validation errors, expand the
+      // generic "1 error(s) (MISSING_MANDATORY)" message into a
+      // field-by-field list so the SE knows which input to fix.
+      // Backend ships `errors[].field_name` and `errors[].message`
+      // on `detail` for these failures (`/services/l2_element_validator.py`).
+      const detail = (err as { response?: { data?: { detail?: { code?: string; errors?: Array<{ message?: string; field_name?: string }> } } } })
+        ?.response?.data?.detail
+      const fieldErrors = detail?.errors
+      if (fieldErrors && fieldErrors.length > 0) {
+        setError(fieldErrors.map(e => e.message || `${e.field_name} is invalid`).join(' · '))
+      } else {
+        setError(extractErrorMessage(err, mode === 'edit' ? 'Failed to update practice.' : 'Failed to add practice.'))
+      }
     } finally { setSaving(false) }
   }
 
@@ -888,11 +905,23 @@ export function PracticeFormModal({
             <button type="button" onClick={onClose}
               className="flex-1 border border-slate-200 text-slate-700 font-medium py-2.5 rounded-xl text-sm">Cancel</button>
             <button type="submit"
-              disabled={saving || !practiceForm.l2_type}
+              disabled={
+                saving
+                || !practiceForm.l2_type
+                // 2026-06-30 — Block submit while any file is still
+                // uploading. Pre-fix the SE could click Add Practice
+                // before the upload completed, the empty URL produced
+                // a server-side MISSING_MANDATORY, and the modal
+                // showed the warning even though a retry (after the
+                // upload landed) saved cleanly.
+                || Object.values(uploadingByField).some(Boolean)
+              }
               className="flex-1 bg-blue-600 text-white font-semibold py-2.5 rounded-xl text-sm disabled:opacity-50">
               {saving
                 ? (mode === 'edit' ? 'Saving…' : 'Adding…')
-                : (mode === 'edit' ? 'Save Changes' : 'Add Practice')}
+                : Object.values(uploadingByField).some(Boolean)
+                  ? 'Waiting for upload…'
+                  : (mode === 'edit' ? 'Save Changes' : 'Add Practice')}
             </button>
           </div>
         </form>

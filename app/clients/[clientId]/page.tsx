@@ -54,6 +54,7 @@ export default function ClientDetailPage() {
   const [showCMAssign, setShowCMAssign] = useState(false)
   const [cmForm, setCmForm] = useState({ cm_user_id: '', rights: 'EDIT' })
   const [savingCM, setSavingCM] = useState(false)
+  const [cmError, setCmError] = useState<string>('')
   const [orgTypes, setOrgTypes] = useState<OrgTypeOption[]>([])
 
   useEffect(() => { load() }, [clientId])
@@ -82,11 +83,16 @@ export default function ClientDetailPage() {
   }
 
   async function saveCMAssignment() {
-    setSavingCM(true)
+    setSavingCM(true); setCmError('')
     try {
       await api.put(`/admin/clients/${clientId}/cm-assignment`, cmForm)
       setShowCMAssign(false)
       load()
+    } catch (err: unknown) {
+      // 2026-06-30 — prior failure mode swallowed IntegrityError from
+      // the backend and rendered the unchanged page. Show the real
+      // error so the SA can act on it.
+      setCmError(extractErrorMessage(err, 'Could not save CM assignment. Please try again.'))
     } finally { setSavingCM(false) }
   }
 
@@ -599,8 +605,11 @@ export default function ClientDetailPage() {
                 </p>
               </div>
             </div>
+            {cmError && (
+              <p className="mt-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{cmError}</p>
+            )}
             <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setShowCMAssign(false)} className="px-4 py-2 text-sm text-slate-600">Cancel</button>
+              <button onClick={() => { setShowCMAssign(false); setCmError('') }} className="px-4 py-2 text-sm text-slate-600">Cancel</button>
               <button onClick={saveCMAssignment} disabled={!cmForm.cm_user_id || savingCM}
                 className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
                 {savingCM ? 'Saving…' : 'Assign CM'}
