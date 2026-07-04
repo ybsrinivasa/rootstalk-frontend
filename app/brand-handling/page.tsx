@@ -4,12 +4,28 @@ import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 
 interface MissingBrandReport {
-  id: string; dealer_user_id: string; order_item_id: string
+  id: string
+  dealer_user_id: string
+  dealer_name: string | null
+  dealer_phone: string | null
+  order_item_id: string | null
   brand_name_reported: string; manufacturer_name: string | null
+  l1_type: string | null
   l2_practice: string | null; additional_info: string | null
-  status: string; cm_notes: string | null; created_at: string
+  photos: string[]
+  status: string; cm_notes: string | null
+  reviewed_at: string | null
+  created_at: string
 }
 
+// 2026-07-04 — user-facing terminology maps PENDING→"Submitted",
+// APPROVED→"Included". The backend enum values stay stable.
+const STATUS_LABEL: Record<string, string> = {
+  PENDING: 'Submitted',
+  REVIEWED: 'Under Review',
+  APPROVED: 'Included',
+  REJECTED: 'Rejected',
+}
 const STATUS_COLOUR: Record<string, string> = {
   PENDING: 'bg-amber-100 text-amber-700',
   REVIEWED: 'bg-blue-100 text-blue-700',
@@ -71,24 +87,59 @@ export default function BrandHandlingPage() {
                 {pending.map(r => (
                   <div key={r.id} className="bg-white rounded-xl border border-slate-200 p-5">
                     <div className="flex items-start justify-between gap-4 mb-3">
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <p className="font-bold text-slate-900">{r.brand_name_reported}</p>
                         {r.manufacturer_name && <p className="text-xs text-slate-500 mt-0.5">Manufacturer: {r.manufacturer_name}</p>}
-                        {r.l2_practice && <p className="text-xs text-slate-500">Practice type: {r.l2_practice}</p>}
+                        {(r.l1_type || r.l2_practice) && (
+                          <p className="text-xs text-slate-500">
+                            {r.l1_type ? <>Category: {r.l1_type}{r.l2_practice ? ' · ' : ''}</> : null}
+                            {r.l2_practice && <>Sub-category: {r.l2_practice}</>}
+                          </p>
+                        )}
                         {r.additional_info && <p className="text-xs text-slate-400 mt-1 italic">{r.additional_info}</p>}
                       </div>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${STATUS_COLOUR[r.status]}`}>
-                        {r.status}
+                        {STATUS_LABEL[r.status] || r.status}
                       </span>
                     </div>
+                    {/* 2026-07-04 — dealer contact block so SA can call
+                        the submitter for clarification before deciding. */}
+                    {(r.dealer_name || r.dealer_phone) && (
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 mb-3 text-xs flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-medium text-slate-700 truncate">{r.dealer_name || 'Dealer'}</p>
+                          {r.dealer_phone && <p className="text-slate-400 font-mono">{r.dealer_phone}</p>}
+                        </div>
+                        {r.dealer_phone && (
+                          <a href={`tel:${r.dealer_phone}`}
+                            className="shrink-0 text-xs px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700 hover:bg-white font-medium">
+                            📞 Call
+                          </a>
+                        )}
+                      </div>
+                    )}
+                    {/* 2026-07-04 — product photo gallery (standalone
+                        submissions ship 2-4; legacy order-context rows
+                        may have zero — hidden when empty). */}
+                    {r.photos && r.photos.length > 0 && (
+                      <div className="flex gap-2 mb-3 overflow-x-auto">
+                        {r.photos.map((url, i) => (
+                          <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                            className="shrink-0">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={url} alt="" className="h-24 w-24 object-cover rounded-lg border border-slate-200" />
+                          </a>
+                        ))}
+                      </div>
+                    )}
                     <textarea value={notes[r.id] || ''}
                       onChange={e => setNotes(n => ({ ...n, [r.id]: e.target.value }))}
-                      rows={2} placeholder="CM notes (optional)…"
+                      rows={2} placeholder="Note to the dealer (optional; shown on rejection)…"
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:outline-none mb-3 resize-none" />
                     <div className="flex gap-2">
                       <button onClick={() => updateStatus(r.id, 'APPROVED')} disabled={actingOn === r.id}
                         className="flex-1 py-2 text-xs font-semibold bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">
-                        {actingOn === r.id ? '…' : '✓ Approve — add to Cosh'}
+                        {actingOn === r.id ? '…' : '✓ Include'}
                       </button>
                       <button onClick={() => updateStatus(r.id, 'REJECTED')} disabled={actingOn === r.id}
                         className="flex-1 py-2 text-xs font-semibold border border-red-200 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50">
@@ -108,9 +159,12 @@ export default function BrandHandlingPage() {
                   <div key={r.id} className="px-5 py-3.5 flex items-center justify-between">
                     <div>
                       <p className="text-sm font-semibold text-slate-700">{r.brand_name_reported}</p>
-                      {r.cm_notes && <p className="text-xs text-slate-400 mt-0.5">{r.cm_notes}</p>}
+                      {r.dealer_name && <p className="text-xs text-slate-500 mt-0.5">{r.dealer_name}{r.dealer_phone ? ` · ${r.dealer_phone}` : ''}</p>}
+                      {r.cm_notes && <p className="text-xs text-slate-400 mt-0.5 italic">{r.cm_notes}</p>}
                     </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLOUR[r.status]}`}>{r.status}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLOUR[r.status]}`}>
+                      {STATUS_LABEL[r.status] || r.status}
+                    </span>
                   </div>
                 ))}
               </div>
