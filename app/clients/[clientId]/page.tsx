@@ -17,6 +17,10 @@ type Client = {
   tagline: string | null; logo_url: string | null; website: string | null
   support_phone: string | null; office_phone: string | null; social_links: Record<string, string> | null
   payment_model: PaymentModel
+  // 2026-07-04 — SA-only flag to hide COMPANY_PAYS clients from the
+  // farmer's Crops & Companies drawer surface. Backend refuses True
+  // when payment_model is FARMER_PAYS. Default False on legacy rows.
+  hidden_from_discovery: boolean
   rejection_reason: string | null; approved_at: string | null; created_at: string
   /** Backend-computed env-driven login URL — built from FRONTEND_BASE_URL.
    *  Replaced the previously hardcoded `https://rootstalk.in/<short_name>`
@@ -113,6 +117,7 @@ export default function ClientDetailPage() {
       ca_email: client.ca_email,
       is_manufacturer: client.is_manufacturer,
       payment_model: client.payment_model,
+      hidden_from_discovery: !!client.hidden_from_discovery,
       logo_url: client.logo_url || '',
       primary_colour: client.primary_colour || '',
       secondary_colour: client.secondary_colour || '',
@@ -507,7 +512,15 @@ export default function ClientDetailPage() {
                 <div className="flex gap-2">
                   {(['COMPANY_PAYS', 'FARMER_PAYS'] as const).map(pm => (
                     <button key={pm} type="button"
-                      onClick={() => setEditForm(f => ({ ...f, payment_model: pm }))}
+                      onClick={() => setEditForm(f => ({
+                        ...f,
+                        payment_model: pm,
+                        // Clear hidden_from_discovery when flipping to
+                        // FARMER_PAYS — the backend refuses True on
+                        // that model, and leaving a stale True in
+                        // state would fail the save with a 422.
+                        hidden_from_discovery: pm === 'FARMER_PAYS' ? false : f.hidden_from_discovery,
+                      }))}
                       className={`flex-1 py-2 text-sm font-medium rounded-xl border-2 transition-all ${
                         editForm.payment_model === pm
                           ? (pm === 'COMPANY_PAYS'
@@ -523,6 +536,34 @@ export default function ClientDetailPage() {
                   Determines whether farmers self-subscribe (Farmer Pays) or only Promoter-assigned subscriptions are allowed (Company Pays).
                 </p>
               </div>
+
+              {/* 2026-07-04 — SA-only hide flag. Only meaningful for
+                  COMPANY_PAYS clients: FARMER_PAYS clients are already
+                  gated out of the two subscribe-flow discovery endpoints
+                  and MUST remain discoverable in Crops & Companies so
+                  farmers know where to subscribe. For COMPANY_PAYS the
+                  checkbox suppresses the client from the district-scoped
+                  drawer surface — used for internal / testing / demo
+                  clients that shouldn't leak to real farmers.
+                  Only rendered when the (currently-editing) payment
+                  model is COMPANY_PAYS to keep the modal quiet on the
+                  common case. */}
+              {editForm.payment_model === 'COMPANY_PAYS' && (
+                <div>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox"
+                      checked={!!editForm.hidden_from_discovery}
+                      onChange={e => setEditForm(f => ({ ...f, hidden_from_discovery: e.target.checked }))}
+                      className="w-4 h-4 rounded mt-0.5" />
+                    <span className="text-sm text-slate-700">
+                      Hide from farmer discovery (Crops &amp; Companies)
+                      <span className="block text-xs text-slate-400 mt-0.5">
+                        For internal, testing, or demo clients. When enabled, farmers in this client's districts will NOT see it on the Crops &amp; Companies drawer surface.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-2">Organisation Types</label>
