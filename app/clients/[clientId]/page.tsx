@@ -21,6 +21,11 @@ type Client = {
   // farmer's Crops & Companies drawer surface. Backend refuses True
   // when payment_model is FARMER_PAYS. Default False on legacy rows.
   hidden_from_discovery: boolean
+  // 2026-07-05 — Cosh input_manufacturers cosh_id linking this client
+  // to Cosh's manufacturer core. Only meaningful when is_manufacturer
+  // is true; backend refuses to set it otherwise. Powers the QR Brand
+  // Portfolio picker on the CA side.
+  cosh_manufacturer_id: string | null
   rejection_reason: string | null; approved_at: string | null; created_at: string
   /** Backend-computed env-driven login URL — built from FRONTEND_BASE_URL.
    *  Replaced the previously hardcoded `https://rootstalk.in/<short_name>`
@@ -60,6 +65,10 @@ export default function ClientDetailPage() {
   const [savingCM, setSavingCM] = useState(false)
   const [cmError, setCmError] = useState<string>('')
   const [orgTypes, setOrgTypes] = useState<OrgTypeOption[]>([])
+  // 2026-07-05 — Cosh input_manufacturers list for the "Cosh
+  // Manufacturer" dropdown on the client-edit modal. Only rendered
+  // when is_manufacturer is true. Sorted server-side by name.
+  const [coshMfrs, setCoshMfrs] = useState<{ cosh_id: string; name: string }[]>([])
 
   useEffect(() => { load() }, [clientId])
 
@@ -67,6 +76,9 @@ export default function ClientDetailPage() {
     api.get<OrgTypeOption[]>(`/cosh/options/organization-types`)
       .then(r => setOrgTypes(r.data))
       .catch(() => setOrgTypes([]))
+    api.get<{ cosh_id: string; name: string }[]>('/admin/cosh/manufacturers')
+      .then(r => setCoshMfrs(r.data))
+      .catch(() => setCoshMfrs([]))
   }, [])
 
   async function load() {
@@ -118,6 +130,7 @@ export default function ClientDetailPage() {
       is_manufacturer: client.is_manufacturer,
       payment_model: client.payment_model,
       hidden_from_discovery: !!client.hidden_from_discovery,
+      cosh_manufacturer_id: client.cosh_manufacturer_id || '',
       logo_url: client.logo_url || '',
       primary_colour: client.primary_colour || '',
       secondary_colour: client.secondary_colour || '',
@@ -496,11 +509,45 @@ export default function ClientDetailPage() {
               <div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!editForm.is_manufacturer}
-                    onChange={e => setEditForm(f => ({ ...f, is_manufacturer: e.target.checked }))}
+                    onChange={e => setEditForm(f => ({
+                      ...f,
+                      is_manufacturer: e.target.checked,
+                      // 2026-07-05 — Clear the Cosh manufacturer link
+                      // when un-checking is_manufacturer. Backend
+                      // refuses the pair (is_manufacturer=false +
+                      // cosh_manufacturer_id set) with 422; clearing
+                      // client-side keeps the modal from hitting it.
+                      cosh_manufacturer_id: e.target.checked ? f.cosh_manufacturer_id : '',
+                    }))}
                     className="w-4 h-4 rounded" />
                   <span className="text-sm text-slate-700">Is Manufacturer (enables QR Code module)</span>
                 </label>
               </div>
+
+              {/* 2026-07-05 — Cosh Manufacturer picker. Rendered only
+                  when is_manufacturer is on. Deterministic link into
+                  Cosh's input_manufacturers Core — replaces the
+                  fragile free-text search the CA portal used to have.
+                  Optional at approval time; SA can set later. */}
+              {editForm.is_manufacturer && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-2">
+                    Cosh Manufacturer
+                  </label>
+                  <select
+                    value={editForm.cosh_manufacturer_id || ''}
+                    onChange={e => setEditForm(f => ({ ...f, cosh_manufacturer_id: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none">
+                    <option value="">— Not linked —</option>
+                    {coshMfrs.map(m => (
+                      <option key={m.cosh_id} value={m.cosh_id}>{m.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Links this client to a Cosh manufacturer so their pesticide / fertilizer brands surface automatically on the QR Brand Portfolio. Seed varieties come from RootsTalk and don&apos;t use this link.
+                  </p>
+                </div>
+              )}
 
               {/* Payment Model — spec §11.1. Editable post-approval per
                   KK feedback 2026-05-09. Backend `ClientEdit` schema
