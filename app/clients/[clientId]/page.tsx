@@ -42,6 +42,19 @@ type Client = {
 // Core via `/cosh/options/organization-types`.
 interface OrgTypeOption { cosh_id: string; name: string }
 
+// 2026-07-07 — per-client CA table. Rows returned by
+// `GET /admin/clients/{id}/cas`. Sorted ACTIVE-first server-side.
+interface CARow {
+  id: string
+  user_id: string
+  name: string | null
+  email: string | null
+  phone: string | null
+  status: 'ACTIVE' | 'INACTIVE'
+  activated_at: string
+  deactivated_at: string | null
+}
+
 export default function ClientDetailPage() {
   const { clientId } = useParams()
   const router = useRouter()
@@ -69,6 +82,14 @@ export default function ClientDetailPage() {
   // Manufacturer" dropdown on the client-edit modal. Only rendered
   // when is_manufacturer is true. Sorted server-side by name.
   const [coshMfrs, setCoshMfrs] = useState<{ cosh_id: string; name: string }[]>([])
+  // Per-client CA table (2026-07-07)
+  const [showCAs, setShowCAs] = useState(false)
+  const [cas, setCAs] = useState<CARow[]>([])
+  const [casLoading, setCasLoading] = useState(false)
+  const [showAddCA, setShowAddCA] = useState(false)
+  const [newCAForm, setNewCAForm] = useState({ ca_email: '', ca_name: '' })
+  const [caActionErr, setCaActionErr] = useState('')
+  const [caBusy, setCaBusy] = useState(false)
 
   useEffect(() => { load() }, [clientId])
 
@@ -116,6 +137,53 @@ export default function ClientDetailPage() {
     if (!confirm('Remove CM from this client?')) return
     await api.delete(`/admin/clients/${clientId}/cm-assignment`)
     load()
+  }
+
+  async function openManageCAs() {
+    setShowCAs(true)
+    setShowAddCA(false)
+    setCaActionErr('')
+    await loadCAs()
+  }
+
+  async function loadCAs() {
+    setCasLoading(true)
+    try {
+      const { data } = await api.get<CARow[]>(`/admin/clients/${clientId}/cas`)
+      setCAs(data)
+    } catch (err: unknown) {
+      setCaActionErr(extractErrorMessage(err, 'Could not load CA history.'))
+    } finally { setCasLoading(false) }
+  }
+
+  async function submitNewCA() {
+    if (!newCAForm.ca_email.trim() || !newCAForm.ca_name.trim()) return
+    setCaBusy(true); setCaActionErr('')
+    try {
+      const { data } = await api.post<CARow[]>(`/admin/clients/${clientId}/cas`, newCAForm)
+      setCAs(data)
+      setNewCAForm({ ca_email: '', ca_name: '' })
+      setShowAddCA(false)
+      // Refresh main client card so the CA Name/Email/Phone rows
+      // mirror the new active CA.
+      load()
+    } catch (err: unknown) {
+      setCaActionErr(extractErrorMessage(err, 'Could not add CA. Please try again.'))
+    } finally { setCaBusy(false) }
+  }
+
+  async function activatePastCA(cu_id: string) {
+    if (!confirm('Make this the active CA? The current CA will be deactivated.')) return
+    setCaBusy(true); setCaActionErr('')
+    try {
+      const { data } = await api.post<CARow[]>(
+        `/admin/clients/${clientId}/cas/${cu_id}/activate`,
+      )
+      setCAs(data)
+      load()
+    } catch (err: unknown) {
+      setCaActionErr(extractErrorMessage(err, 'Could not activate CA. Please try again.'))
+    } finally { setCaBusy(false) }
   }
 
   function openEdit() {
@@ -244,6 +312,16 @@ export default function ClientDetailPage() {
           <Row label="CA Name" value={client.ca_name} />
           <Row label="CA Email" value={client.ca_email} />
           <Row label="CA Phone" value={client.ca_phone} />
+          {client.status === 'ACTIVE' && (
+            <div className="flex justify-end -mt-1 mb-1">
+              <button
+                onClick={openManageCAs}
+                className="text-xs font-medium text-blue-600 hover:text-blue-800 underline"
+              >
+                Manage CAs
+              </button>
+            </div>
+          )}
           <Row label="Manufacturer" value={client.is_manufacturer ? 'Yes — QR module enabled' : 'No'} />
           <Row label="Payment Model" value={
             <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -703,6 +781,135 @@ export default function ClientDetailPage() {
                 {savingCM ? 'Saving…' : 'Assign CM'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2026-07-07 — per-client CA management modal. */}
+      {showCAs && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Manage CAs</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {client.display_name || client.full_name}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowCAs(false)}
+                className="text-slate-400 hover:text-slate-700 text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            {casLoading && (
+              <p className="text-sm text-slate-500">Loading…</p>
+            )}
+
+            {!casLoading && cas.length > 0 && (
+              <div className="space-y-3">
+                {cas.map(row => (
+                  <div
+                    key={row.id}
+                    className={`border rounded-xl p-3 ${
+                      row.status === 'ACTIVE'
+                        ? 'border-emerald-300 bg-emerald-50'
+                        : 'border-slate-200 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-slate-900 truncate">
+                            {row.name || 'Unnamed'}
+                          </p>
+                          {row.status === 'ACTIVE' && (
+                            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 bg-emerald-600 text-white rounded">
+                              Active
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-600 truncate">{row.email}</p>
+                        {row.phone && (
+                          <p className="text-xs text-slate-500">{row.phone}</p>
+                        )}
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Activated {new Date(row.activated_at).toLocaleDateString()}
+                          {row.status !== 'ACTIVE' && row.deactivated_at && (
+                            <> · Deactivated {new Date(row.deactivated_at).toLocaleDateString()}</>
+                          )}
+                        </p>
+                      </div>
+                      {row.status !== 'ACTIVE' && (
+                        <button
+                          onClick={() => activatePastCA(row.id)}
+                          disabled={caBusy}
+                          className="text-xs font-medium text-blue-600 hover:text-blue-800 underline whitespace-nowrap disabled:opacity-50"
+                        >
+                          Activate
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!casLoading && cas.length === 0 && (
+              <p className="text-sm text-slate-500">No CAs recorded yet.</p>
+            )}
+
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              {!showAddCA ? (
+                <button
+                  onClick={() => { setShowAddCA(true); setCaActionErr('') }}
+                  className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                >
+                  + Add new CA
+                </button>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm font-semibold text-slate-800">New CA</p>
+                  <Field
+                    label="Name"
+                    value={newCAForm.ca_name}
+                    onChange={v => setNewCAForm(f => ({ ...f, ca_name: v }))}
+                  />
+                  <Field
+                    label="Email"
+                    type="email"
+                    value={newCAForm.ca_email}
+                    onChange={v => setNewCAForm(f => ({ ...f, ca_email: v }))}
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    The current CA (if any) will be deactivated. A new CA account is
+                    created if this email isn&apos;t already in RootsTalk; otherwise the
+                    existing user is reassigned.
+                  </p>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => { setShowAddCA(false); setNewCAForm({ ca_email: '', ca_name: '' }) }}
+                      className="px-3 py-1.5 text-sm text-slate-600"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={submitNewCA}
+                      disabled={caBusy || !newCAForm.ca_email.trim() || !newCAForm.ca_name.trim()}
+                      className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {caBusy ? 'Saving…' : 'Add CA'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {caActionErr && (
+              <p className="mt-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{caActionErr}</p>
+            )}
           </div>
         </div>
       )}
