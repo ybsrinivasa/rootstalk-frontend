@@ -66,6 +66,11 @@ export default function UsersPage() {
     try {
       if (editing) {
         await api.put(`/admin/users/${editing.id}`, { name: form.name, phone: form.phone, email: form.email })
+        const prev = [...editing.roles].sort().join(',')
+        const next = [...form.roles].sort().join(',')
+        if (prev !== next) {
+          await api.put(`/admin/users/${editing.id}/roles`, { roles: form.roles })
+        }
         setSuccess('User updated.')
       } else {
         await api.post('/admin/users', form)
@@ -75,7 +80,7 @@ export default function UsersPage() {
       setForm({ name: '', phone: '', email: '', roles: [] })
       load()
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Failed to save user')
+      setError(e?.response?.data?.detail?.message || e?.response?.data?.detail || 'Failed to save user')
     } finally { setSaving(false) }
     setTimeout(() => setSuccess(''), 4000)
   }
@@ -290,24 +295,27 @@ export default function UsersPage() {
                   onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1A5C2A]/30" />
               </div>
-              {!editing && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-2">Role(s) *</label>
-                  <div className="space-y-2">
-                    {ROLE_OPTIONS.map(r => (
-                      <button key={r.value} onClick={() => toggleRole(r.value)}
-                        className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all ${
-                          form.roles.includes(r.value)
-                            ? 'border-[#1A5C2A] bg-[#1A5C2A]/5 text-[#1A5C2A]'
-                            : 'border-gray-200 text-gray-600'
-                        }`}>
-                        <span>{r.label}</span>
-                        {form.roles.includes(r.value) && <span className="text-[#1A5C2A]">✓</span>}
-                      </button>
-                    ))}
-                  </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-2">Role(s) *</label>
+                <div className="space-y-2">
+                  {ROLE_OPTIONS.map(r => (
+                    <button key={r.value} onClick={() => toggleRole(r.value)}
+                      className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all ${
+                        form.roles.includes(r.value)
+                          ? 'border-[#1A5C2A] bg-[#1A5C2A]/5 text-[#1A5C2A]'
+                          : 'border-gray-200 text-gray-600'
+                      }`}>
+                      <span>{r.label}</span>
+                      {form.roles.includes(r.value) && <span className="text-[#1A5C2A]">✓</span>}
+                    </button>
+                  ))}
                 </div>
-              )}
+                {editing && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    Unchecking a role deactivates that assignment. Removing the user entirely goes through the Deactivate button on their row.
+                  </p>
+                )}
+              </div>
               {!editing && (
                 <p className="text-xs text-gray-400 bg-gray-50 rounded-lg p-2">
                   Login credentials will be sent to the email address after creation.
