@@ -136,6 +136,7 @@ const ALL_NAV: NavItem[] = [
   // below special-cases COACH so multi-role users (COACH + CM,
   // COACH + RM, etc.) all see this entry.
   { href: '/coaching',             label: 'Coaching Sessions',  Icon: IconGraduation, roles: ['SA', 'COACH'],     group: 'COACHING' },
+  { href: '/coaching/certified',   label: 'Certified Students', Icon: IconGraduation, roles: ['SA', 'COACH'],     group: 'COACHING' },
   // TEAM
   { href: '/users',                label: 'Team Users',         Icon: IconUsers,      roles: ['SA'],              group: 'TEAM' },
   { href: '/change-password',      label: 'Change Password',    Icon: IconLock,       roles: ['SA', 'CM', 'RM'],  group: 'TEAM' },

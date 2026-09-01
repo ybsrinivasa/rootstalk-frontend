@@ -66,6 +66,9 @@ interface StudentDetail {
   grade: 'SATISFACTORY' | 'GOOD' | 'EXCELLENT' | null
   created_at: string
   counts: StudentActivityCounts
+  certificate_number: string | null
+  certificate_generated_at: string | null
+  certificate_pdf_url: string | null
 }
 interface SessionDetail {
   id: string
@@ -246,6 +249,18 @@ export default function CoachingSessionDetailPage() {
     } finally { setBusyAction(null) }
   }
 
+  async function generateCertificate(sid: string) {
+    setBusyAction(`gen-cert-${sid}`); setError('')
+    try {
+      await api.post(
+        `/coaching/sessions/${sessionId}/students/${sid}/certificate/generate`,
+      )
+      await load()
+    } catch (e) {
+      setError(extractErrorMessage(e, 'Failed to generate certificate'))
+    } finally { setBusyAction(null) }
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -409,7 +424,8 @@ export default function CoachingSessionDetailPage() {
                   sessionStatus={session.status}
                   busyAction={busyAction}
                   onRolesChange={setPwaRoles}
-                  onCertify={setStudentCertification} />
+                  onCertify={setStudentCertification}
+                  onGenerateCertificate={generateCertificate} />
               ))}
             </div>
           )}
@@ -476,12 +492,14 @@ const GRADE_COLOUR: Record<string, string> = {
 
 function StudentRow({
   student, sessionStatus, busyAction, onRolesChange, onCertify,
+  onGenerateCertificate,
 }: {
   student: StudentDetail
   sessionStatus: string
   busyAction: string | null
   onRolesChange: (sid: string, roles: string[]) => void
   onCertify: (sid: string, certified: boolean, grade: string | null) => void
+  onGenerateCertificate: (sid: string) => void
 }) {
   const isDraft = sessionStatus === 'DRAFT'
   const isActive = sessionStatus === 'ACTIVE'
@@ -577,6 +595,46 @@ function StudentRow({
               </button>
             )}
           </div>
+
+          {/* Certificate — appears once student is certified. Coach can
+              (re)generate the PDF; the same certificate_number sticks
+              across regenerations so verification URLs are stable. */}
+          {student.certified_at && (
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <p className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-2">
+                Certificate
+              </p>
+              {student.certificate_generated_at && student.certificate_pdf_url ? (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                  <p className="text-xs text-emerald-800 font-medium mb-1">
+                    ✓ Certificate generated + emailed to student
+                  </p>
+                  <p className="text-[11px] text-emerald-700/80 mb-2">
+                    Generated {new Date(student.certificate_generated_at).toLocaleString()}
+                    {' · '}Cert #{student.certificate_number}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <a href={student.certificate_pdf_url} target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-white bg-emerald-700 hover:bg-emerald-800 font-medium px-3 py-1.5 rounded-lg">
+                      Open PDF
+                    </a>
+                    <button onClick={() => onGenerateCertificate(student.id)}
+                      disabled={busyAction !== null}
+                      className="text-xs text-slate-600 border border-slate-300 hover:bg-slate-100 font-medium px-3 py-1.5 rounded-lg disabled:opacity-50">
+                      {busyAction === `gen-cert-${student.id}` ? '…' : 'Regenerate & Resend'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => onGenerateCertificate(student.id)}
+                  disabled={busyAction !== null}
+                  className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg disabled:opacity-50">
+                  {busyAction === `gen-cert-${student.id}` ? '…' : '📜 Generate & Send Certificate'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
