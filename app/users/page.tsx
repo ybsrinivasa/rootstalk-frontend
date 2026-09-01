@@ -12,6 +12,9 @@ const ROLE_OPTIONS = [
   { value: 'CONTENT_MANAGER', label: 'Content Manager', colour: 'bg-purple-100 text-purple-700' },
   { value: 'RELATIONSHIP_MANAGER', label: 'Relationship Manager', colour: 'bg-sky-100 text-sky-700' },
   { value: 'BUSINESS_MANAGER', label: 'Business Manager', colour: 'bg-amber-100 text-amber-700' },
+  // 2026-09-01 — Coaching Sandbox role. Layers on top of CM/RM/BM or
+  // stands alone; grants access to the Coaching Sessions sidebar entry.
+  { value: 'COACH', label: 'Coach', colour: 'bg-fuchsia-100 text-fuchsia-800' },
 ]
 
 const PRIVILEGE_OPTIONS = [
