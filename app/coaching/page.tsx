@@ -32,7 +32,7 @@ interface SessionListItem {
   closed_at: string | null
 }
 
-interface ClientMini { id: string; full_name: string; short_name: string; status: string }
+interface ClientMini { id: string; full_name: string; short_name: string }
 
 const STATUS_COLOURS: Record<string, string> = {
   DRAFT:          'bg-slate-100 text-slate-600',
@@ -104,12 +104,12 @@ export default function CoachingSessionsPage() {
     setSelectedClientId('')
     if (clients.length === 0) {
       try {
-        // /admin/clients is the SA-side list; a Coach who isn't SA
-        // also needs to see the roster of real clients to pick a
-        // reference from. Backend gates the read at the app level.
-        const { data } = await api.get<ClientMini[]>('/admin/clients')
-        // Only ACTIVE real clients can host a coaching session.
-        setClients(data.filter(c => c.status === 'ACTIVE'))
+        // Coach-scoped endpoint — returns only ACTIVE real clients
+        // (not training children, not coaching workspaces) that
+        // can host a session. Works for both SA and COACH-role
+        // users; /admin/clients would 403 for a non-SA coach.
+        const { data } = await api.get<ClientMini[]>('/coaching/reference-clients')
+        setClients(data)
       } catch (e) {
         setError(extractErrorMessage(e, 'Failed to load clients'))
       }
