@@ -46,6 +46,13 @@ interface InviteDetail {
   approved_at: string | null
   expires_at: string
 }
+interface StudentActivityCounts {
+  packages: number
+  practices: number
+  subscriptions: number
+  orders: number
+  queries: number
+}
 interface StudentDetail {
   id: string
   user_id: string
@@ -56,7 +63,9 @@ interface StudentDetail {
   approved_phone: string
   assigned_pwa_roles: string[]
   certified_at: string | null
+  grade: 'SATISFACTORY' | 'GOOD' | 'EXCELLENT' | null
   created_at: string
+  counts: StudentActivityCounts
 }
 interface SessionDetail {
   id: string
@@ -222,12 +231,14 @@ export default function CoachingSessionDetailPage() {
     } finally { setBusyAction(null) }
   }
 
-  async function toggleCertification(sid: string, certified: boolean) {
+  async function setStudentCertification(
+    sid: string, certified: boolean, grade: string | null,
+  ) {
     setBusyAction(`cert-${sid}`); setError('')
     try {
       await api.post(
         `/coaching/sessions/${sessionId}/students/${sid}/certify`,
-        { certified },
+        certified ? { certified: true, grade } : { certified: false },
       )
       await load()
     } catch (e) {
@@ -398,7 +409,7 @@ export default function CoachingSessionDetailPage() {
                   sessionStatus={session.status}
                   busyAction={busyAction}
                   onRolesChange={setPwaRoles}
-                  onCertify={toggleCertification} />
+                  onCertify={setStudentCertification} />
               ))}
             </div>
           )}
@@ -451,6 +462,18 @@ export default function CoachingSessionDetailPage() {
 
 // ── Per-student row with PWA-role toggles + certification ─────────────────
 
+const GRADE_LABEL: Record<string, string> = {
+  SATISFACTORY: 'Satisfactory',
+  GOOD: 'Good',
+  EXCELLENT: 'Excellent',
+}
+const GRADE_COLOUR: Record<string, string> = {
+  SATISFACTORY: 'bg-blue-100 text-blue-800',
+  GOOD:         'bg-emerald-100 text-emerald-800',
+  EXCELLENT:    'bg-purple-100 text-purple-800',
+}
+
+
 function StudentRow({
   student, sessionStatus, busyAction, onRolesChange, onCertify,
 }: {
@@ -458,12 +481,13 @@ function StudentRow({
   sessionStatus: string
   busyAction: string | null
   onRolesChange: (sid: string, roles: string[]) => void
-  onCertify: (sid: string, certified: boolean) => void
+  onCertify: (sid: string, certified: boolean, grade: string | null) => void
 }) {
   const isDraft = sessionStatus === 'DRAFT'
   const isActive = sessionStatus === 'ACTIVE'
   const isClosed = sessionStatus.startsWith('CLOSED_')
   const currentRoles = new Set(student.assigned_pwa_roles || [])
+  const [gradeChoice, setGradeChoice] = useState<string>(student.grade || 'GOOD')
 
   function toggleRole(role: string) {
     const next = new Set(currentRoles)
@@ -478,9 +502,9 @@ function StudentRow({
         <div>
           <p className="font-semibold text-slate-800">
             {student.student_name || '—'}
-            {student.certified_at && (
-              <span className="ml-2 text-xs text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                ✓ Certified
+            {student.certified_at && student.grade && (
+              <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${GRADE_COLOUR[student.grade]}`}>
+                ✓ {GRADE_LABEL[student.grade]}
               </span>
             )}
           </p>
@@ -490,19 +514,73 @@ function StudentRow({
             <span className="text-slate-400 ml-3">Phone:</span> <code className="text-slate-700">{student.approved_phone}</code>
           </p>
         </div>
-        {isClosed && (
-          <button onClick={() => onCertify(student.id, !student.certified_at)}
-            disabled={busyAction !== null}
-            className={`text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50 ${
-              student.certified_at
-                ? 'text-slate-600 hover:bg-slate-100 border border-slate-300'
-                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-            }`}>
-            {busyAction === `cert-${student.id}` ? '…' : (student.certified_at ? 'Uncertify' : 'Certify')}
-          </button>
-        )}
       </div>
 
+      {/* Per-workspace activity counts — coach's evaluation context */}
+      {(isActive || isClosed) && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-2">
+            Workspace activity
+          </p>
+          <div className="grid grid-cols-5 gap-2">
+            {[
+              { label: 'Packages',      value: student.counts.packages },
+              { label: 'Practices',     value: student.counts.practices },
+              { label: 'Subscriptions', value: student.counts.subscriptions },
+              { label: 'Orders',        value: student.counts.orders },
+              { label: 'Queries',       value: student.counts.queries },
+            ].map(k => (
+              <div key={k.label} className="bg-slate-50 border border-slate-200 rounded-lg py-2 text-center">
+                <p className="text-lg font-semibold text-slate-800">{k.value}</p>
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">{k.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Certification (post-close) — grade dropdown + Certify/Uncertify */}
+      {isClosed && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-2">
+            Certification
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs text-slate-600">Grade:</label>
+            <select value={gradeChoice}
+              onChange={e => setGradeChoice(e.target.value)}
+              disabled={busyAction !== null}
+              className="border border-slate-300 rounded-lg px-2 py-1 text-xs">
+              <option value="SATISFACTORY">Satisfactory</option>
+              <option value="GOOD">Good</option>
+              <option value="EXCELLENT">Excellent</option>
+            </select>
+            {student.certified_at ? (
+              <>
+                <button onClick={() => onCertify(student.id, true, gradeChoice)}
+                  disabled={busyAction !== null || gradeChoice === student.grade}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg disabled:opacity-50"
+                  title={gradeChoice === student.grade ? 'Grade already set to this value' : 'Update grade'}>
+                  Update Grade
+                </button>
+                <button onClick={() => onCertify(student.id, false, null)}
+                  disabled={busyAction !== null}
+                  className="text-slate-600 hover:bg-slate-100 text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-300 disabled:opacity-50">
+                  Uncertify
+                </button>
+              </>
+            ) : (
+              <button onClick={() => onCertify(student.id, true, gradeChoice)}
+                disabled={busyAction !== null}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg disabled:opacity-50">
+                {busyAction === `cert-${student.id}` ? '…' : 'Certify'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* PWA role toggles — draft / active only */}
       {(isDraft || isActive) && (
         <div className="mt-3 pt-3 border-t border-slate-100">
           <p className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-2">
