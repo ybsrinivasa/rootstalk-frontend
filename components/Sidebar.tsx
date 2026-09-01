@@ -82,6 +82,13 @@ function IconTag() {
     </svg>
   )
 }
+function IconGraduation() {
+  return (
+    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222" />
+    </svg>
+  )
+}
 function IconLock() {
   return (
     <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
@@ -125,12 +132,16 @@ const ALL_NAV: NavItem[] = [
   // MY WORK
   { href: '/my-clients',           label: 'My Clients',         Icon: IconBriefcase,  roles: ['CM'],              group: 'MY WORK' },
   { href: '/rm',                   label: 'RM Support Desk',    Icon: IconHeadphones, roles: ['SA', 'RM'],        group: 'MY WORK' },
+  // COACHING — SA + anyone with COACH role. The per-item filter
+  // below special-cases COACH so multi-role users (COACH + CM,
+  // COACH + RM, etc.) all see this entry.
+  { href: '/coaching',             label: 'Coaching Sessions',  Icon: IconGraduation, roles: ['SA', 'COACH'],     group: 'COACHING' },
   // TEAM
   { href: '/users',                label: 'Team Users',         Icon: IconUsers,      roles: ['SA'],              group: 'TEAM' },
   { href: '/change-password',      label: 'Change Password',    Icon: IconLock,       roles: ['SA', 'CM', 'RM'],  group: 'TEAM' },
 ]
 
-const GROUP_ORDER = ['PLATFORM', 'CONTENT', 'MY WORK', 'TEAM']
+const GROUP_ORDER = ['PLATFORM', 'CONTENT', 'MY WORK', 'COACHING', 'TEAM']
 
 function GroupLabel({ label }: { label: string }) {
   return (
@@ -165,7 +176,17 @@ export default function Sidebar() {
       ? 'SA'
       : (ROLE_CODE[userRoles[0]] || userRoles[0])
 
-  const filteredNav = ALL_NAV.filter(item => item.roles.includes(effectiveRole))
+  // Coaching Sessions is shown to SA (implicit coach) OR any user
+  // whose active roles include COACH. COACH is a non-exclusive role
+  // that layers on top of CM/RM/BM, so a per-item special case
+  // avoids expanding effectiveRole beyond its single-role contract.
+  const hasCoachRole = userRoles.includes('COACH')
+
+  const filteredNav = ALL_NAV.filter(item => {
+    if (item.roles.includes(effectiveRole)) return true
+    if (item.roles.includes('COACH') && hasCoachRole) return true
+    return false
+  })
 
   const grouped = GROUP_ORDER.map(group => ({
     group,
