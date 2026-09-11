@@ -90,9 +90,21 @@ function ReportsContent() {
   const [districtId, setDistrictId] = useState(searchParams.get('district') || '')
   const [inclSandboxes, setInclSandboxes] = useState(searchParams.get('sb') === '1')
 
-  const initialClientIds = (searchParams.get('clients') || '')
-    .split(',').map(s => s.trim()).filter(Boolean)
-  const [selectedClients, setSelectedClients] = useState<Set<string>>(new Set(initialClientIds))
+  // Client selection is tri-state:
+  //   null            → default (all real clients — backend gets no client_ids)
+  //   []              → explicit zero (backend gets `__none__` → 0s for
+  //                      every client-scoped metric)
+  //   [id, id, …]     → explicit subset
+  // Derive the display Set from this + the loaded clients list so we
+  // never race a fetch against a useEffect setter.
+  const initialClientsParam = searchParams.get('clients') || ''
+  const initialExplicit: string[] | null =
+    initialClientsParam === '__none__'
+      ? []
+      : initialClientsParam
+        ? initialClientsParam.split(',').map(s => s.trim()).filter(Boolean)
+        : null
+  const [explicitClientIds, setExplicitClientIds] = useState<string[] | null>(initialExplicit)
 
   const [clients, setClients] = useState<ClientRow[]>([])
   const [states, setStates] = useState<StateRow[]>([])
@@ -108,13 +120,13 @@ function ReportsContent() {
     ]).then(([c, l]) => {
       setClients(c.data as ClientRow[])
       setStates((l.data as { states: StateRow[] }).states || [])
-      // If URL had no explicit clients selection, default to "all".
-      if (initialClientIds.length === 0) {
-        setSelectedClients(new Set((c.data as ClientRow[]).map(r => r.id)))
-      }
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const selectedClients = useMemo(() => {
+    if (explicitClientIds === null) return new Set(clients.map(c => c.id))
+    return new Set(explicitClientIds)
+  }, [explicitClientIds, clients])
 
   const districts = useMemo(() => {
     if (!stateId) return []
@@ -122,12 +134,10 @@ function ReportsContent() {
   }, [states, stateId])
 
   const clientCsv = useMemo(() => {
-    // Only include client_ids in payload when the user has narrowed
-    // the selection. Empty → backend interprets as "all real clients".
-    if (clients.length === 0) return ''
-    if (selectedClients.size === clients.length) return ''
-    return Array.from(selectedClients).join(',')
-  }, [selectedClients, clients])
+    if (explicitClientIds === null) return ''       // default → all real clients
+    if (explicitClientIds.length === 0) return '__none__' // explicit zero
+    return explicitClientIds.join(',')
+  }, [explicitClientIds])
 
   // ── Fetch summary when filters change ───────────────────────────────
   useEffect(() => {
@@ -159,15 +169,18 @@ function ReportsContent() {
   }, [from, to, stateId, districtId, clientCsv, inclSandboxes, router])
 
   function toggleClient(id: string) {
-    setSelectedClients(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      return next
-    })
+    // Materialise the current selection into an explicit list on first
+    // toggle so subsequent toggles have a stable starting set.
+    const base = explicitClientIds === null ? clients.map(c => c.id) : explicitClientIds
+    const set = new Set(base)
+    if (set.has(id)) set.delete(id); else set.add(id)
+    setExplicitClientIds(Array.from(set))
   }
 
   function selectAllClients(check: boolean) {
-    setSelectedClients(new Set(check ? clients.map(c => c.id) : []))
+    // check=true  → default (all real clients — collapse URL param)
+    // check=false → explicit zero (URL gets `clients=__none__`)
+    setExplicitClientIds(check ? null : [])
   }
 
   function downloadCsv() {
@@ -263,15 +276,22 @@ function ReportsContent() {
 
         {/* Client multi-select */}
         <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Clients</label>
+          <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
             <div className="flex items-center gap-3">
-              <label className="inline-flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                <input type="checkbox"
-                  checked={clients.length > 0 && selectedClients.size === clients.length}
-                  onChange={e => selectAllClients(e.target.checked)} />
-                All ({clients.length})
-              </label>
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Clients</label>
+              <span className="text-xs text-slate-500">
+                {selectedClients.size} of {clients.length} selected
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => selectAllClients(true)}
+                className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">
+                Select all
+              </button>
+              <button type="button" onClick={() => selectAllClients(false)}
+                className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">
+                Clear
+              </button>
               <label className="inline-flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
                 <input type="checkbox"
                   checked={inclSandboxes}
@@ -287,13 +307,20 @@ function ReportsContent() {
               return (
                 <button key={c.id}
                   onClick={() => toggleClient(c.id)}
-                  className={`text-xs px-2 py-1 rounded border ${on ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-300 text-slate-700'}`}
+                  className={on
+                    ? 'text-xs px-2 py-1 rounded border bg-emerald-600 border-emerald-600 text-white'
+                    : 'text-xs px-2 py-1 rounded border bg-white border-slate-300 text-slate-700'}
                 >
                   {c.name}
                 </button>
               )
             })}
           </div>
+          {clients.length > 0 && selectedClients.size === 0 && (
+            <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+              No clients selected — every client-scoped tile below will show 0. Click <b>Select all</b> to include all real clients, or pick specific ones.
+            </p>
+          )}
         </div>
       </div>
 
