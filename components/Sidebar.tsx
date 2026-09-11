@@ -109,6 +109,7 @@ interface NavItem {
 const ALL_NAV: NavItem[] = [
   // PLATFORM
   { href: '/dashboard',            label: 'Dashboard',          Icon: IconHome,       roles: ['SA', 'CM', 'RM'], group: 'PLATFORM' },
+  { href: '/reports',              label: 'Reports',            Icon: IconBook,       roles: ['SA'],              group: 'PLATFORM' },
   { href: '/clients',              label: 'Companies',          Icon: IconBuilding,   roles: ['SA', 'RM'],        group: 'PLATFORM' },
   { href: '/languages',            label: 'Languages',          Icon: IconGlobe,      roles: ['SA'],              group: 'PLATFORM' },
   { href: '/sync',                 label: 'Sync Log',           Icon: IconRefresh,    roles: ['SA'],              group: 'PLATFORM' },
