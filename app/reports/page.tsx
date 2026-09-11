@@ -26,6 +26,8 @@ type Metrics = {
   primary_experts: number
   panel_experts: number
   queries_raised: number
+  queries_raised_responded: number
+  queries_raised_pending: number
   queries_responded: number
   queries_pending: number
   pests_diagnosed: number
@@ -433,6 +435,21 @@ function ReportsContent() {
                 }
               }
 
+              // Queries Raised — self-contained breakdown of the raised
+              // window into "responded (as-of period_to)" + "still pending".
+              let breakdownText: React.ReactNode | null = null
+              if (t.key === 'queries_raised' && data) {
+                const r = data.current.queries_raised_responded ?? 0
+                const p = data.current.queries_raised_pending ?? 0
+                breakdownText = (
+                  <>
+                    <span className="text-emerald-700 font-medium">{r.toLocaleString()} responded</span>
+                    <span className="text-slate-300 mx-1.5">·</span>
+                    <span className="text-amber-700 font-medium">{p.toLocaleString()} pending</span>
+                  </>
+                )
+              }
+
               return (
                 <div key={t.key} className="bg-white border border-slate-200 rounded-xl p-4">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{t.label}</p>
@@ -443,6 +460,9 @@ function ReportsContent() {
                       <p className="text-3xl font-bold text-slate-900 mt-1 tabular-nums">{cur.toLocaleString()}</p>
                       {ratioText && (
                         <p className="text-xs text-slate-500 mt-0.5">{ratioText}</p>
+                      )}
+                      {breakdownText && (
+                        <p className="text-xs mt-0.5">{breakdownText}</p>
                       )}
                       <p className={`text-xs mt-1 ${deltaColour}`}>
                         {pct ? (
