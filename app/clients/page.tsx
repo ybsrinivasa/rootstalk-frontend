@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 import Link from 'next/link'
@@ -9,7 +9,11 @@ type Client = {
   id: string; full_name: string; short_name: string; ca_name: string
   ca_email: string; status: string; is_manufacturer: boolean; created_at: string
   display_name: string | null
+  is_coaching?: boolean
+  is_training?: boolean
 }
+
+type TabKey = 'companies' | 'coaching' | 'training'
 
 const STATUS_COLOURS: Record<string, string> = {
   PENDING_REVIEW: 'bg-amber-100 text-amber-700',
@@ -21,6 +25,7 @@ const STATUS_COLOURS: Record<string, string> = {
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState<TabKey>('companies')
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<{
     full_name: string; short_name: string; ca_name: string;
@@ -69,12 +74,32 @@ export default function ClientsPage() {
     } finally { setSaving(false) }
   }
 
+  const bucketed = useMemo(() => {
+    const companies: Client[] = []
+    const coaching: Client[] = []
+    const training: Client[] = []
+    for (const c of clients) {
+      if (c.is_coaching) coaching.push(c)
+      else if (c.is_training) training.push(c)
+      else companies.push(c)
+    }
+    return { companies, coaching, training }
+  }, [clients])
+
+  const visible = tab === 'companies' ? bucketed.companies : tab === 'coaching' ? bucketed.coaching : bucketed.training
+  const tabHeading = tab === 'companies' ? 'Companies' : tab === 'coaching' ? 'Coaching Workspaces' : 'Training Workspaces'
+  const emptyCopy = tab === 'companies'
+    ? 'No companies yet. Initiate the first onboarding.'
+    : tab === 'coaching'
+      ? 'No coaching workspaces. Provisioned when a coach approves a student.'
+      : 'No training workspaces. Created by CA-portal training sessions.'
+
   return (
     <AdminLayout>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Companies</h1>
-          <p className="text-slate-500 text-sm mt-0.5">{clients.length} registered</p>
+          <h1 className="text-2xl font-bold text-slate-900">{tabHeading}</h1>
+          <p className="text-slate-500 text-sm mt-0.5">{visible.length} of {clients.length} total</p>
         </div>
         <button onClick={() => { setShowModal(true); setError(''); setLink('') }}
           className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
@@ -82,16 +107,44 @@ export default function ClientsPage() {
         </button>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-slate-200 mb-4">
+        {([
+          { key: 'companies', label: 'Companies', count: bucketed.companies.length },
+          { key: 'coaching',  label: 'Coaching',  count: bucketed.coaching.length },
+          { key: 'training',  label: 'Training',  count: bucketed.training.length },
+        ] as { key: TabKey; label: string; count: number }[]).map(t => {
+          const active = tab === t.key
+          return (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                active
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}>
+              {t.label} <span className="text-xs text-slate-400 ml-1">({t.count})</span>
+            </button>
+          )
+        })}
+      </div>
+
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         {loading
           ? <p className="text-center py-12 text-slate-400">Loading…</p>
-          : clients.length === 0
-            ? <p className="text-center py-12 text-slate-400">No companies yet. Initiate the first onboarding.</p>
-            : clients.map(c => (
+          : visible.length === 0
+            ? <p className="text-center py-12 text-slate-400">{emptyCopy}</p>
+            : visible.map(c => {
+              // On Coaching / Training tabs the tab itself signals the
+              // sandbox nature — strip the redundant "[Coaching] " /
+              // "[Training] " prefix from the display name.
+              const shownName = tab === 'companies'
+                ? c.full_name
+                : c.full_name.replace(/^\[(Coaching|Training)\]\s*/, '')
+              return (
               <div key={c.id} className="flex items-center justify-between px-5 py-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
                 <div>
                   <div className="flex items-center gap-2">
-                    <p className="font-medium text-slate-800">{c.full_name}</p>
+                    <p className="font-medium text-slate-800">{shownName}</p>
                     {c.is_manufacturer && <span className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded">Manufacturer</span>}
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5">
@@ -110,7 +163,8 @@ export default function ClientsPage() {
                   </Link>
                 </div>
               </div>
-            ))
+              )
+            })
         }
       </div>
 
