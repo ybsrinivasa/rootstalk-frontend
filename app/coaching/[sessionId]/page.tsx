@@ -187,6 +187,22 @@ export default function CoachingSessionDetailPage() {
     } finally { setBusyAction(null) }
   }
 
+  async function regenerateInvite(iid: string) {
+    if (!confirm(
+      'Regenerate the invite link? The current link stops working immediately '
+      + '(any data the student submitted is discarded), and a fresh link is '
+      + 'emailed to them. Use this if the student needs to resubmit or the '
+      + 'link needs to be resent.'
+    )) return
+    setBusyAction(`regen-${iid}`); setError('')
+    try {
+      await api.post(`/coaching/sessions/${sessionId}/invites/${iid}/regenerate`)
+      await load()
+    } catch (e) {
+      setError(extractErrorMessage(e, 'Failed to regenerate'))
+    } finally { setBusyAction(null) }
+  }
+
   async function startSession() {
     if (!confirm('Starting freezes the roster — no new students can be added. The 30-day session clock begins now. Proceed?')) return
     setBusyAction('start'); setError('')
@@ -386,6 +402,12 @@ export default function CoachingSessionDetailPage() {
                           className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg disabled:opacity-50">
                           Approve
                         </button>
+                        <button onClick={() => regenerateInvite(inv.id)}
+                          disabled={busyAction !== null}
+                          className="text-slate-600 hover:bg-slate-100 text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-300 disabled:opacity-50"
+                          title="Void this submission and email a fresh link so the student can resubmit">
+                          Regenerate link
+                        </button>
                         <button onClick={() => rejectInvite(inv.id)}
                           disabled={busyAction !== null}
                           className="text-red-600 hover:bg-red-100 text-xs font-medium px-3 py-1.5 rounded-lg border border-red-200 disabled:opacity-50">
@@ -446,9 +468,19 @@ export default function CoachingSessionDetailPage() {
                       Invited {formatDateTime(inv.created_at)} · Expires {formatDateTime(inv.expires_at)}
                     </p>
                   </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${INVITE_STATUS_COLOURS[inv.status]}`}>
-                    Not submitted yet
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${INVITE_STATUS_COLOURS[inv.status]}`}>
+                      Not submitted yet
+                    </span>
+                    {isDraft && (
+                      <button onClick={() => regenerateInvite(inv.id)}
+                        disabled={busyAction !== null}
+                        className="text-slate-600 hover:bg-slate-100 text-xs font-medium px-2.5 py-1 rounded-lg border border-slate-300 disabled:opacity-50"
+                        title="Void this invite and email a fresh link with a new token">
+                        Regenerate link
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -529,8 +561,18 @@ function StudentRow({
           <p className="text-sm text-slate-500">{student.student_email}</p>
           <p className="text-xs text-slate-500 mt-1">
             <span className="text-slate-400">Workspace:</span> <code className="text-slate-700">{student.workspace_short_name}</code>
-            <span className="text-slate-400 ml-3">Phone:</span> <code className="text-slate-700">{student.approved_phone}</code>
+            <span className="text-slate-400 ml-3">Practice phone:</span> <code className="text-slate-700">{student.approved_phone}</code>
+            {student.approved_phone?.startsWith('+913') && (
+              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-purple-100 text-purple-700 align-middle">
+                Temp
+              </span>
+            )}
           </p>
+          {student.approved_phone?.startsWith('+913') && (
+            <p className="text-[11px] text-purple-700 mt-1">
+              Practice number — SMS is skipped; OTP shows in the student's PWA for training.
+            </p>
+          )}
         </div>
       </div>
 
