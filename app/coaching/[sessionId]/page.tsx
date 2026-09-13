@@ -265,6 +265,21 @@ export default function CoachingSessionDetailPage() {
     } finally { setBusyAction(null) }
   }
 
+  async function viewStudentWorkspace(sid: string) {
+    setBusyAction(`view-${sid}`); setError('')
+    try {
+      const { data } = await api.post<{ token: string; portal_url: string }>(
+        `/coaching/sessions/${sessionId}/students/${sid}/view-workspace`,
+      )
+      // Fragment (# not ?) so the token never travels to the server
+      // as part of an access log or referrer header.
+      const url = `${data.portal_url.replace(/\/$/, '')}/#coach_view_token=${encodeURIComponent(data.token)}`
+      window.open(url, '_blank', 'noopener')
+    } catch (e) {
+      setError(extractErrorMessage(e, 'Failed to open workspace'))
+    } finally { setBusyAction(null) }
+  }
+
   async function generateCertificate(sid: string) {
     setBusyAction(`gen-cert-${sid}`); setError('')
     try {
@@ -447,7 +462,8 @@ export default function CoachingSessionDetailPage() {
                   busyAction={busyAction}
                   onRolesChange={setPwaRoles}
                   onCertify={setStudentCertification}
-                  onGenerateCertificate={generateCertificate} />
+                  onGenerateCertificate={generateCertificate}
+                  onViewWorkspace={viewStudentWorkspace} />
               ))}
             </div>
           )}
@@ -524,7 +540,7 @@ const GRADE_COLOUR: Record<string, string> = {
 
 function StudentRow({
   student, sessionStatus, busyAction, onRolesChange, onCertify,
-  onGenerateCertificate,
+  onGenerateCertificate, onViewWorkspace,
 }: {
   student: StudentDetail
   sessionStatus: string
@@ -532,6 +548,7 @@ function StudentRow({
   onRolesChange: (sid: string, roles: string[]) => void
   onCertify: (sid: string, certified: boolean, grade: string | null) => void
   onGenerateCertificate: (sid: string) => void
+  onViewWorkspace: (sid: string) => void
 }) {
   const isDraft = sessionStatus === 'DRAFT'
   const isActive = sessionStatus === 'ACTIVE'
@@ -548,8 +565,8 @@ function StudentRow({
 
   return (
     <div className={`bg-white border rounded-xl p-4 ${student.certified_at ? 'border-emerald-200' : 'border-slate-200'}`}>
-      <div className="flex items-start justify-between mb-2">
-        <div>
+      <div className="flex items-start justify-between mb-2 gap-3">
+        <div className="min-w-0">
           <p className="font-semibold text-slate-800">
             {student.student_name || '—'}
             {student.certified_at && student.grade && (
@@ -574,6 +591,18 @@ function StudentRow({
             </p>
           )}
         </div>
+        {(isActive || isClosed) && (
+          <button onClick={() => onViewWorkspace(student.id)}
+            disabled={busyAction !== null}
+            className="flex-shrink-0 flex items-center gap-1 text-purple-700 hover:bg-purple-50 border border-purple-200 text-xs font-medium px-3 py-1.5 rounded-lg disabled:opacity-50"
+            title="Open the student's workspace read-only in a new tab">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+            {busyAction === `view-${student.id}` ? '…' : 'View'}
+          </button>
+        )}
       </div>
 
       {/* Per-workspace activity counts — coach's evaluation context */}

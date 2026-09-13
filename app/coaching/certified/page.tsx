@@ -54,6 +54,7 @@ export default function CertifiedRegistryPage() {
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [gradeFilter, setGradeFilter] = useState<string>('')
+  const [busyView, setBusyView] = useState<string | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -66,6 +67,21 @@ export default function CertifiedRegistryPage() {
       setError(extractErrorMessage(e, 'Failed to load certified students'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function viewWorkspace(coachingStudentId: string) {
+    setBusyView(coachingStudentId); setError('')
+    try {
+      const { data } = await api.post<{ token: string; portal_url: string }>(
+        `/coaching/certified/${coachingStudentId}/view-workspace`,
+      )
+      const url = `${data.portal_url.replace(/\/$/, '')}/#coach_view_token=${encodeURIComponent(data.token)}`
+      window.open(url, '_blank', 'noopener')
+    } catch (e) {
+      setError(extractErrorMessage(e, 'Failed to open workspace'))
+    } finally {
+      setBusyView(null)
     }
   }
 
@@ -138,6 +154,7 @@ export default function CertifiedRegistryPage() {
                   <th className="text-left px-4 py-3 font-medium">Grade</th>
                   <th className="text-left px-4 py-3 font-medium">Certified</th>
                   <th className="text-left px-4 py-3 font-medium">Certificate</th>
+                  <th className="text-left px-4 py-3 font-medium">Workspace</th>
                 </tr>
               </thead>
               <tbody>
@@ -178,6 +195,18 @@ export default function CertifiedRegistryPage() {
                           Not generated →
                         </Link>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button onClick={() => viewWorkspace(r.id)}
+                        disabled={busyView !== null}
+                        className="flex items-center gap-1 text-purple-700 hover:bg-purple-50 border border-purple-200 text-xs font-medium px-2.5 py-1 rounded-lg disabled:opacity-50"
+                        title="Open the student's workspace read-only in a new tab">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                        {busyView === r.id ? '…' : 'View'}
+                      </button>
                     </td>
                   </tr>
                 ))}
