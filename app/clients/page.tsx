@@ -31,7 +31,17 @@ export default function ClientsPage() {
     full_name: string; short_name: string; ca_name: string;
     ca_phone: string; ca_email: string; is_manufacturer: boolean;
     payment_model: 'COMPANY_PAYS' | 'FARMER_PAYS' | '';
-  }>({ full_name: '', short_name: '', ca_name: '', ca_phone: '', ca_email: '', is_manufacturer: false, payment_model: '' })
+    // Advisory-Only Mode (2026-09-16). Snapshot on Subscription at
+    // create; SA can flip anytime post-onboarding via the edit form.
+    advisory_only_mode: boolean;
+    dealer_list_enabled: boolean;
+    subscription_fee_paise: number | null;
+  }>({
+    full_name: '', short_name: '', ca_name: '', ca_phone: '',
+    ca_email: '', is_manufacturer: false, payment_model: '',
+    advisory_only_mode: false, dealer_list_enabled: false,
+    subscription_fee_paise: null,
+  })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [link, setLink] = useState('')
@@ -196,7 +206,7 @@ export default function ClientsPage() {
                 ].map(f => (
                   <div key={f.key}>
                     <label className="block text-xs font-medium text-slate-600 mb-1">{f.label}</label>
-                    <input value={(form as Record<string, string | boolean>)[f.key] as string}
+                    <input value={(form as Record<string, string | boolean | number | null>)[f.key] as string}
                       onChange={e => setForm({ ...form, [f.key]: e.target.value })}
                       placeholder={f.placeholder}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -263,6 +273,75 @@ export default function ClientsPage() {
                       </div>
                     </div>
                   </label>
+                </div>
+
+                {/* Advisory-Only Mode section (2026-09-16). Two checkboxes:
+                    the main mode + the optional dealer-list add-on
+                    (greyed out unless the main is checked). Plus a
+                    subscription-fee override that defaults to ₹99 when
+                    Advisory-only is ticked. See
+                    docs/AdvisoryOnly_v1_scoping.md §6. */}
+                <div className="border-t border-slate-200 pt-4">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox" checked={form.advisory_only_mode}
+                      onChange={e => setForm({
+                        ...form,
+                        advisory_only_mode: e.target.checked,
+                        // Default subscription_fee_paise to ₹99 (9900) on
+                        // check; clear on uncheck so traditional pricing
+                        // resumes. Dealer-list is meaningful only when
+                        // this is on.
+                        subscription_fee_paise: e.target.checked ? 9900 : null,
+                        dealer_list_enabled: e.target.checked && form.dealer_list_enabled,
+                      })}
+                      className="w-4 h-4 mt-0.5 accent-purple-600" />
+                    <div>
+                      <div className="text-sm text-slate-800 font-medium">Advisory-only mode</div>
+                      <div className="text-xs text-slate-500">
+                        Farmer sees input details up front and buys from any dealer.
+                        In-app ordering, dealer/facilitator payment routing, and
+                        brand-lock are hidden. This flag can be flipped anytime — existing
+                        subscriptions keep the mode captured when they were created; only
+                        new subscriptions pick up the current setting.
+                      </div>
+                    </div>
+                  </label>
+                  <label className={`flex items-start gap-2 mt-2 ml-6 ${form.advisory_only_mode ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
+                    <input type="checkbox" checked={form.dealer_list_enabled}
+                      disabled={!form.advisory_only_mode}
+                      onChange={e => setForm({ ...form, dealer_list_enabled: e.target.checked })}
+                      className="w-4 h-4 mt-0.5 accent-purple-600" />
+                    <div>
+                      <div className="text-sm text-slate-800 font-medium">Show nearby-dealers list</div>
+                      <div className="text-xs text-slate-500">
+                        Include a read-only list of the 5 nearest onboarded dealers
+                        on the farmer&apos;s crop dashboard, with search-by-location and
+                        map view. No orders can be placed from this list.
+                      </div>
+                    </div>
+                  </label>
+                  {form.advisory_only_mode && (
+                    <div className="mt-3 ml-6">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Subscription fee per crop (₹)
+                      </label>
+                      <input type="number" min={0} step={1}
+                        value={form.subscription_fee_paise !== null
+                          ? Math.round(form.subscription_fee_paise / 100)
+                          : ''}
+                        onChange={e => setForm({
+                          ...form,
+                          subscription_fee_paise: e.target.value
+                            ? Math.round(parseFloat(e.target.value) * 100)
+                            : null,
+                        })}
+                        className="w-32 px-3 py-1.5 text-sm border border-slate-300 rounded-lg" />
+                      <p className="text-xs text-slate-500 mt-1">
+                        Applies uniformly to farmer-pays and company-pays channels.
+                        Bulk discounts do not apply.
+                      </p>
+                    </div>
+                  )}
                 </div>
                 {error && <p className="text-sm text-red-600">{error}</p>}
                 <div className="flex justify-end gap-2 pt-2">

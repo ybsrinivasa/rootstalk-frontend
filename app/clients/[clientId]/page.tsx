@@ -26,6 +26,10 @@ type Client = {
   // is true; backend refuses to set it otherwise. Powers the QR Brand
   // Portfolio picker on the CA side.
   cosh_manufacturer_id: string | null
+  // 2026-09-16 — Advisory-Only Mode fields. See scoping doc.
+  advisory_only_mode?: boolean
+  dealer_list_enabled?: boolean
+  subscription_fee_paise?: number | null
   rejection_reason: string | null; approved_at: string | null; created_at: string
   /** Backend-computed env-driven login URL — built from FRONTEND_BASE_URL.
    *  Replaced the previously hardcoded `https://rootstalk.in/<short_name>`
@@ -208,6 +212,10 @@ export default function ClientDetailPage() {
       office_phone: client.office_phone || '',
       social_links: client.social_links || {},
       org_type_cosh_ids: client.org_type_cosh_ids || [],
+      // 2026-09-16 — Advisory-Only Mode.
+      advisory_only_mode: !!client.advisory_only_mode,
+      dealer_list_enabled: !!client.dealer_list_enabled,
+      subscription_fee_paise: client.subscription_fee_paise ?? null,
     })
     setShowEdit(true)
   }
@@ -332,6 +340,25 @@ export default function ClientDetailPage() {
               {client.payment_model === 'COMPANY_PAYS' ? 'Company Pays' : 'Farmer Pays'}
             </span>
           } />
+          {client.advisory_only_mode && (
+            <Row label="Advisory-Only" value={
+              <span className="inline-flex items-center gap-2">
+                <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                  Advisory-only mode
+                </span>
+                {client.dealer_list_enabled && (
+                  <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200">
+                    Nearby-dealers list
+                  </span>
+                )}
+                {client.subscription_fee_paise !== null && client.subscription_fee_paise !== undefined && (
+                  <span className="text-xs text-slate-600">
+                    · ₹{Math.round(client.subscription_fee_paise / 100)}/crop
+                  </span>
+                )}
+              </span>
+            } />
+          )}
           <Row label="Registered" value={new Date(client.created_at).toLocaleDateString()} />
           {client.approved_at && <Row label="Approved" value={new Date(client.approved_at).toLocaleDateString()} />}
           {client.rejection_reason && (
@@ -689,6 +716,72 @@ export default function ClientDetailPage() {
                   </label>
                 </div>
               )}
+
+              {/* Advisory-Only Mode section (2026-09-16) — see
+                  docs/AdvisoryOnly_v1_scoping.md §6. */}
+              <div className="border-t border-slate-200 pt-4 space-y-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox"
+                    checked={!!editForm.advisory_only_mode}
+                    onChange={e => setEditForm(f => ({
+                      ...f,
+                      advisory_only_mode: e.target.checked,
+                      // Default fee to ₹99 on enable; clear on disable.
+                      subscription_fee_paise: e.target.checked
+                        ? (f.subscription_fee_paise ?? 9900)
+                        : null,
+                      dealer_list_enabled: e.target.checked && f.dealer_list_enabled,
+                    }))}
+                    className="w-4 h-4 mt-0.5 accent-purple-600" />
+                  <span className="text-sm text-slate-700">
+                    Advisory-only mode
+                    <span className="block text-xs text-slate-500 mt-0.5">
+                      Farmer sees input details up front and buys from any dealer.
+                      In-app ordering, dealer/facilitator payment routing, and
+                      brand-lock are hidden. This flag can be flipped anytime —
+                      existing subscriptions keep the mode captured when they were
+                      created; only new subscriptions pick up the current setting.
+                    </span>
+                  </span>
+                </label>
+                <label className={`flex items-start gap-2 ml-6 ${editForm.advisory_only_mode ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
+                  <input type="checkbox"
+                    checked={!!editForm.dealer_list_enabled}
+                    disabled={!editForm.advisory_only_mode}
+                    onChange={e => setEditForm(f => ({ ...f, dealer_list_enabled: e.target.checked }))}
+                    className="w-4 h-4 mt-0.5 accent-purple-600" />
+                  <span className="text-sm text-slate-700">
+                    Show nearby-dealers list
+                    <span className="block text-xs text-slate-500 mt-0.5">
+                      Include a read-only list of the 5 nearest onboarded dealers
+                      on the farmer&apos;s crop dashboard, with search-by-location and
+                      map view. No orders can be placed from this list.
+                    </span>
+                  </span>
+                </label>
+                {editForm.advisory_only_mode && (
+                  <div className="ml-6 pt-1">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Subscription fee per crop (₹)
+                    </label>
+                    <input type="number" min={0} step={1}
+                      value={editForm.subscription_fee_paise !== null && editForm.subscription_fee_paise !== undefined
+                        ? Math.round((editForm.subscription_fee_paise as number) / 100)
+                        : ''}
+                      onChange={e => setEditForm(f => ({
+                        ...f,
+                        subscription_fee_paise: e.target.value
+                          ? Math.round(parseFloat(e.target.value) * 100)
+                          : null,
+                      }))}
+                      className="w-32 px-3 py-1.5 text-sm border border-slate-300 rounded-lg" />
+                    <p className="text-xs text-slate-500 mt-1">
+                      Applies uniformly to farmer-pays and company-pays channels.
+                      Bulk discounts do not apply.
+                    </p>
+                  </div>
+                )}
+              </div>
 
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-2">Organisation Types</label>
