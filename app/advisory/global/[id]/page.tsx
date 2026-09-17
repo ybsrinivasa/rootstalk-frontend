@@ -14,6 +14,11 @@ import { PracticeFormModal, type ExistingPractice } from '@/components/advisory-
 import { useReadOnlyGuard } from '@/components/advisory-authoring/ReadOnlyGuard'
 import api from '@/lib/api'
 import { practiceShortLabel } from '@/lib/practice-label'
+import PracticeBrandsModal from '@/components/PracticeBrandsModal'
+
+// v1.10 — Brands button gate. Only INPUT practices with an L1 in
+// this set have a filterable brand catalog.
+const BRANDS_BUTTON_L1_TYPES = new Set(['PESTICIDE', 'FERTILIZER', 'SPECIAL_INPUT'])
 
 // Batch DD (2026-05-19) — Custom Parameter / Variable authoring is
 // hidden on SA-CCA. User rule: "Globals are pure Cosh — the SA
@@ -183,6 +188,7 @@ export default function GlobalPackageDetailPage() {
   const [timelines, setTimelines] = useState<Timeline[]>([])
   const [practiceMap, setPracticeMap] = useState<Record<string, Practice[]>>({})
   const [expandedPractice, setExpandedPractice] = useState<string | null>(null)  // Batch 32
+  const [brandsPracticeId, setBrandsPracticeId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [publishing, setPublishing] = useState(false)
   // Batch 39L-a (2026-05-16) — rich publish confirmation modal.
@@ -1027,6 +1033,17 @@ export default function GlobalPackageDetailPage() {
                                   <span className="text-[11px] text-slate-400">
                                     {hasElements ? `${p.elements!.length} element${p.elements!.length === 1 ? '' : 's'}` : 'no elements'}
                                   </span>
+                                  {p.l0_type === 'INPUT'
+                                    && p.l1_type
+                                    && BRANDS_BUTTON_L1_TYPES.has(p.l1_type)
+                                    && (
+                                      <button
+                                        onClick={e => { e.stopPropagation(); setBrandsPracticeId(p.id) }}
+                                        className="text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 rounded-lg px-2.5 py-1"
+                                        title="Show Cosh brands matching this chemistry">
+                                        Brands
+                                      </button>
+                                    )}
                                   <button onClick={e => { e.stopPropagation(); tryEdit(() => openEditPractice(tl.id, p)) }}
                                     className="text-slate-300 hover:text-blue-500 p-1" title="Edit practice">
                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1933,6 +1950,10 @@ export default function GlobalPackageDetailPage() {
         )}
         <GuardModal />
       </div>
+      <PracticeBrandsModal
+        practiceId={brandsPracticeId}
+        onClose={() => setBrandsPracticeId(null)}
+      />
     </AdminLayout>
   )
 }
