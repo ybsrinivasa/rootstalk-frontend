@@ -3,7 +3,13 @@ import { useEffect, useState, useMemo, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
+import PracticeBrandsModal from '@/components/PracticeBrandsModal'
 import api from '@/lib/api'
+
+// v1.10 — Brands button gate. Only INPUT practices with an L1 in
+// this set have a filterable brand catalog (SEED authoring uses a
+// different flow; NON_INPUT / INSTRUCTION / MEDIA have no brands).
+const BRANDS_BUTTON_L1_TYPES = new Set(['PESTICIDE', 'FERTILIZER', 'SPECIAL_INPUT'])
 
 interface PracticeElement {
   element_type: string
@@ -57,6 +63,7 @@ function GlobalPracticesContent() {
   const [loading, setLoading] = useState(true)
   const [offset, setOffset] = useState(0)
   const limit = 100
+  const [brandsPracticeId, setBrandsPracticeId] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -133,6 +140,7 @@ function GlobalPracticesContent() {
                 <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Timeline</th>
                 <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide hidden md:table-cell">Package</th>
                 <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide hidden lg:table-cell">Crop</th>
+                <th className="text-right px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -165,6 +173,18 @@ function GlobalPracticesContent() {
                     </Link>
                   </td>
                   <td className="px-5 py-3.5 text-slate-500 hidden lg:table-cell text-xs">{p.crop_name_en}</td>
+                  <td className="px-5 py-3.5 text-right">
+                    {p.l0_type === 'INPUT'
+                      && p.l1_type
+                      && BRANDS_BUTTON_L1_TYPES.has(p.l1_type)
+                      && (
+                        <button
+                          onClick={() => setBrandsPracticeId(p.id)}
+                          className="text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 rounded-lg px-3 py-1.5">
+                          Brands
+                        </button>
+                      )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -184,6 +204,10 @@ function GlobalPracticesContent() {
           )}
         </div>
       )}
+      <PracticeBrandsModal
+        practiceId={brandsPracticeId}
+        onClose={() => setBrandsPracticeId(null)}
+      />
     </AdminLayout>
   )
 }
