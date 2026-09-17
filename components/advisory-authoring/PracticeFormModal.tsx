@@ -428,6 +428,12 @@ export function PracticeFormModal({
   const commonName = elementValues['COMMON_NAME'] || ''
   const manufacturer = elementValues['MANUFACTURER'] || ''
   const brandName = elementValues['BRAND_NAME'] || ''
+  // v1.11 — AI ↔ Formulation cross-filter. See canonical rationale in
+  // CA portal's PracticeFormModal.tsx.
+  const formField = l2Spec.find(f => f.source === 'cosh_cascade:formulation_for_brand')
+  const aiField = l2Spec.find(f => f.source === 'cosh_cascade:ai_concentration_for_brand')
+  const currentForm = formField ? (elementValues[formField.name] || '') : ''
+  const currentAi = aiField ? (elementValues[aiField.name] || '') : ''
 
   useEffect(() => {
     if (l2Spec.length === 0) return
@@ -435,8 +441,11 @@ export function PracticeFormModal({
     const cnEnc = encodeURIComponent(commonName)
     const tnSuffix = brandName ? `&trade_name=${encodeURIComponent(brandName)}` : ''
     const l2Suffix = practiceForm.l2_type ? `&l2=${encodeURIComponent(practiceForm.l2_type)}` : ''
-    const url_form = `/cosh/options/formulations?common_name=${cnEnc}${tnSuffix}${l2Suffix}`
-    const url_ai = `/cosh/options/ai-concentrations?common_name=${cnEnc}${tnSuffix}${l2Suffix}`
+    const formQ = currentAi ? `&ai_concentration=${encodeURIComponent(currentAi)}` : ''
+    const aiQ = currentForm ? `&formulation=${encodeURIComponent(currentForm)}` : ''
+    const url_form = `/cosh/options/formulations?common_name=${cnEnc}${tnSuffix}${l2Suffix}${formQ}`
+    const url_ai = `/cosh/options/ai-concentrations?common_name=${cnEnc}${tnSuffix}${l2Suffix}${aiQ}`
+    const url_form_core = `/cosh/options/formulations?common_name=${cnEnc}${tnSuffix}${l2Suffix}`
     const fetched: Record<string, CoshOption[]> = {}
     const pending: Promise<unknown>[] = []
     for (const f of l2Spec) {
@@ -449,14 +458,30 @@ export function PracticeFormModal({
           .then(r => { fetched[f.name] = r.data })
           .catch(() => { fetched[f.name] = [] }))
       } else if (f.source === 'cosh_core:formulation' && f.cascade_from.length === 0) {
-        pending.push(api.get<CoshOption[]>(url_form)
+        pending.push(api.get<CoshOption[]>(url_form_core)
           .then(r => { fetched[f.name] = r.data })
           .catch(() => { fetched[f.name] = [] }))
       }
     }
     if (pending.length === 0) return
-    Promise.all(pending).then(() => setOptionsByField(prev => ({ ...prev, ...fetched })))
-  }, [commonName, brandName, l2Spec, practiceForm.l2_type])
+    Promise.all(pending).then(() => {
+      setOptionsByField(prev => ({ ...prev, ...fetched }))
+      // v1.11 — clear stale selections that no longer appear in the
+      // narrowed list. Self-terminating (cleared → wider sibling
+      // fetch on next tick).
+      setElementValues(prev => {
+        let next: Record<string, string> | null = null
+        for (const [name, opts] of Object.entries(fetched)) {
+          const cur = prev[name] || ''
+          if (cur && !opts.some(o => o.cosh_id === cur)) {
+            if (next === null) next = { ...prev }
+            next[name] = ''
+          }
+        }
+        return next ?? prev
+      })
+    })
+  }, [commonName, brandName, currentForm, currentAi, l2Spec, practiceForm.l2_type])
 
   // MFR list refresh (bidirectional with TN).
   useEffect(() => {
