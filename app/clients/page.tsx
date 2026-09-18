@@ -36,11 +36,13 @@ export default function ClientsPage() {
     advisory_only_mode: boolean;
     dealer_list_enabled: boolean;
     subscription_fee_paise: number | null;
+    input_alert_lead_days: number | null;
   }>({
     full_name: '', short_name: '', ca_name: '', ca_phone: '',
     ca_email: '', is_manufacturer: false, payment_model: '',
     advisory_only_mode: false, dealer_list_enabled: false,
     subscription_fee_paise: null,
+    input_alert_lead_days: null,
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -339,6 +341,28 @@ export default function ClientsPage() {
                       <p className="text-xs text-slate-500 mt-1">
                         Applies uniformly to farmer-pays and company-pays channels.
                         Bulk discounts do not apply.
+                      </p>
+                    </div>
+                  )}
+                  {form.advisory_only_mode && (
+                    <div className="mt-3 ml-6">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Input alert lead days
+                      </label>
+                      <input type="number" min={0} step={1}
+                        value={form.input_alert_lead_days ?? ''}
+                        placeholder="2"
+                        onChange={e => setForm({
+                          ...form,
+                          input_alert_lead_days: e.target.value !== ''
+                            ? parseInt(e.target.value, 10)
+                            : null,
+                        })}
+                        className="w-32 px-3 py-1.5 text-sm border border-slate-300 rounded-lg" />
+                      <p className="text-xs text-slate-500 mt-1">
+                        Days before an input&apos;s due window when the farmer starts
+                        receiving daily reminders. 0 = only on the due day.
+                        Leave blank for the default of 2.
                       </p>
                     </div>
                   )}

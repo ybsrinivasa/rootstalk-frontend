@@ -30,6 +30,8 @@ type Client = {
   advisory_only_mode?: boolean
   dealer_list_enabled?: boolean
   subscription_fee_paise?: number | null
+  // v1.13 (2026-09-18) — INPUT alert pre-window lead time (days).
+  input_alert_lead_days?: number | null
   rejection_reason: string | null; approved_at: string | null; created_at: string
   /** Backend-computed env-driven login URL — built from FRONTEND_BASE_URL.
    *  Replaced the previously hardcoded `https://rootstalk.in/<short_name>`
@@ -216,6 +218,7 @@ export default function ClientDetailPage() {
       advisory_only_mode: !!client.advisory_only_mode,
       dealer_list_enabled: !!client.dealer_list_enabled,
       subscription_fee_paise: client.subscription_fee_paise ?? null,
+      input_alert_lead_days: client.input_alert_lead_days ?? null,
     })
     setShowEdit(true)
   }
@@ -778,6 +781,33 @@ export default function ClientDetailPage() {
                     <p className="text-xs text-slate-500 mt-1">
                       Applies uniformly to farmer-pays and company-pays channels.
                       Bulk discounts do not apply.
+                    </p>
+                  </div>
+                )}
+                {editForm.advisory_only_mode && (
+                  <div className="ml-6 pt-1">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Input alert lead days
+                    </label>
+                    <input type="number" min={0} step={1}
+                      value={
+                        editForm.input_alert_lead_days !== null &&
+                        editForm.input_alert_lead_days !== undefined
+                          ? (editForm.input_alert_lead_days as number)
+                          : ''
+                      }
+                      placeholder="2"
+                      onChange={e => setEditForm(f => ({
+                        ...f,
+                        input_alert_lead_days: e.target.value !== ''
+                          ? parseInt(e.target.value, 10)
+                          : null,
+                      }))}
+                      className="w-32 px-3 py-1.5 text-sm border border-slate-300 rounded-lg" />
+                    <p className="text-xs text-slate-500 mt-1">
+                      Days before an input&apos;s due window when the farmer
+                      starts receiving daily reminders. 0 = only on the due
+                      day. Leave blank for the default of 2.
                     </p>
                   </div>
                 )}
