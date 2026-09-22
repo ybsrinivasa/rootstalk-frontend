@@ -37,12 +37,14 @@ export default function ClientsPage() {
     dealer_list_enabled: boolean;
     subscription_fee_paise: number | null;
     input_alert_lead_days: number | null;
+    in_app_orders_enabled: boolean;
   }>({
     full_name: '', short_name: '', ca_name: '', ca_phone: '',
     ca_email: '', is_manufacturer: false, payment_model: '',
     advisory_only_mode: false, dealer_list_enabled: false,
     subscription_fee_paise: null,
     input_alert_lead_days: null,
+    in_app_orders_enabled: false,
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -319,6 +321,21 @@ export default function ClientsPage() {
                         Include a read-only list of the 5 nearest onboarded dealers
                         on the farmer&apos;s crop dashboard, with search-by-location and
                         map view. No orders can be placed from this list.
+                      </div>
+                    </div>
+                  </label>
+                  <label className={`flex items-start gap-2 mt-2 ml-6 ${form.advisory_only_mode ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
+                    <input type="checkbox" checked={form.in_app_orders_enabled}
+                      disabled={!form.advisory_only_mode}
+                      onChange={e => setForm({ ...form, in_app_orders_enabled: e.target.checked })}
+                      className="w-4 h-4 mt-0.5 accent-purple-600" />
+                    <div>
+                      <div className="text-sm text-slate-800 font-medium">Enable in-app ordering</div>
+                      <div className="text-xs text-slate-500">
+                        Farmer sees input details upfront (advisory-only behaviour) AND
+                        can place in-app orders like Regular Mode. Alerts and QR
+                        product authentication also behave like Regular Mode.
+                        Only new subscriptions inherit this setting.
                       </div>
                     </div>
                   </label>

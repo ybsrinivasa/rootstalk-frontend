@@ -32,6 +32,8 @@ type Client = {
   subscription_fee_paise?: number | null
   // v1.13 (2026-09-18) — INPUT alert pre-window lead time (days).
   input_alert_lead_days?: number | null
+  // v2 (2026-09-22 Checkbox 3) — hybrid mode toggle.
+  in_app_orders_enabled?: boolean
   rejection_reason: string | null; approved_at: string | null; created_at: string
   /** Backend-computed env-driven login URL — built from FRONTEND_BASE_URL.
    *  Replaced the previously hardcoded `https://rootstalk.in/<short_name>`
@@ -219,6 +221,7 @@ export default function ClientDetailPage() {
       dealer_list_enabled: !!client.dealer_list_enabled,
       subscription_fee_paise: client.subscription_fee_paise ?? null,
       input_alert_lead_days: client.input_alert_lead_days ?? null,
+      in_app_orders_enabled: !!client.in_app_orders_enabled,
     })
     setShowEdit(true)
   }
@@ -352,6 +355,11 @@ export default function ClientDetailPage() {
                 {client.dealer_list_enabled && (
                   <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200">
                     Nearby-dealers list
+                  </span>
+                )}
+                {client.in_app_orders_enabled && (
+                  <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    In-app ordering
                   </span>
                 )}
                 {client.subscription_fee_paise !== null && client.subscription_fee_paise !== undefined && (
@@ -759,6 +767,22 @@ export default function ClientDetailPage() {
                       Include a read-only list of the 5 nearest onboarded dealers
                       on the farmer&apos;s crop dashboard, with search-by-location and
                       map view. No orders can be placed from this list.
+                    </span>
+                  </span>
+                </label>
+                <label className={`flex items-start gap-2 ml-6 ${editForm.advisory_only_mode ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
+                  <input type="checkbox"
+                    checked={!!editForm.in_app_orders_enabled}
+                    disabled={!editForm.advisory_only_mode}
+                    onChange={e => setEditForm(f => ({ ...f, in_app_orders_enabled: e.target.checked }))}
+                    className="w-4 h-4 mt-0.5 accent-purple-600" />
+                  <span className="text-sm text-slate-700">
+                    Enable in-app ordering
+                    <span className="block text-xs text-slate-500 mt-0.5">
+                      Farmer sees input details upfront (advisory-only behaviour) AND
+                      can place in-app orders like Regular Mode. Alerts and QR
+                      product authentication also behave like Regular Mode.
+                      Only new subscriptions inherit this setting.
                     </span>
                   </span>
                 </label>
