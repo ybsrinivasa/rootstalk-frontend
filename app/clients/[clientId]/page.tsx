@@ -346,12 +346,22 @@ export default function ClientDetailPage() {
               {client.payment_model === 'COMPANY_PAYS' ? 'Company Pays' : 'Farmer Pays'}
             </span>
           } />
-          {client.advisory_only_mode && (
-            <Row label="Advisory-Only" value={
+          {/* 2026-09-24: Advisory-Only is now the DEFAULT mode.
+              Show a "Shop-Led" row when this client is on the
+              non-default (advisory_only_mode = false). For advisory-
+              only clients, still surface the optional sub-flags
+              (nearby-dealers list + in-app ordering) since those are
+              orthogonal add-ons. */}
+          {!client.advisory_only_mode && (
+            <Row label="Mode" value={
+              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+                Shop-Led
+              </span>
+            } />
+          )}
+          {client.advisory_only_mode && (client.dealer_list_enabled || client.in_app_orders_enabled) && (
+            <Row label="Advisory-Only add-ons" value={
               <span className="inline-flex items-center gap-2">
-                <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
-                  Advisory-only mode
-                </span>
                 {client.dealer_list_enabled && (
                   <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200">
                     Nearby-dealers list
