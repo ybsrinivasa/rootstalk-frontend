@@ -98,7 +98,7 @@ export default function MyClientsPage() {
                 </p>
                 <div className="flex gap-2">
                   <button onClick={() => router.push(`/clients/${c.client_id}`)}
-                    className="text-xs px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">
+                    className="text-xs px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-200">
                     Details
                   </button>
                   <button onClick={() => openClientPortal(c)}

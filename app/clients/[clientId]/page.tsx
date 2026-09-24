@@ -447,7 +447,7 @@ export default function ClientDetailPage() {
             {cmAssignment?.cm_user_id ? (
               <div className="flex gap-2">
                 <button onClick={() => { setCmForm({ cm_user_id: cmAssignment.cm_user_id!, rights: cmAssignment.rights || 'EDIT' }); setShowCMAssign(true) }}
-                  className="text-xs px-3 py-1 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">
+                  className="text-xs px-3 py-1 bg-slate-100 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-200">
                   Change
                 </button>
                 <button onClick={removeCMAssignment}

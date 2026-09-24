@@ -130,11 +130,11 @@ export default function RMHomePage() {
         {/* Quick nav */}
         <div className="flex gap-3 mt-6">
           <button onClick={() => router.push('/rm/alerts')}
-            className="flex-1 py-3 text-sm font-medium border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">
+            className="flex-1 py-3 text-sm font-medium bg-slate-100 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-200">
             📢 Alert Queue
           </button>
           <button onClick={() => router.push('/rm/cases')}
-            className="flex-1 py-3 text-sm font-medium border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">
+            className="flex-1 py-3 text-sm font-medium bg-slate-100 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-200">
             📋 All Cases
           </button>
         </div>

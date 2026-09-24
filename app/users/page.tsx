@@ -216,7 +216,7 @@ export default function UsersPage() {
                       </div>
                       <div className="flex gap-2 shrink-0 ml-3">
                         <button onClick={() => openEdit(user)}
-                          className="text-xs font-medium text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg hover:bg-gray-100">
+                          className="text-xs font-medium text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg hover:bg-slate-200">
                           Edit
                         </button>
                         <button onClick={() => toggleStatus(user)}
@@ -253,7 +253,7 @@ export default function UsersPage() {
                       </div>
                       <div className="flex gap-2 shrink-0 ml-3">
                         <button onClick={() => openEdit(user)}
-                          className="text-xs font-medium text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg hover:bg-gray-100">
+                          className="text-xs font-medium text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg hover:bg-slate-200">
                           Edit
                         </button>
                         <button onClick={() => toggleStatus(user)}
