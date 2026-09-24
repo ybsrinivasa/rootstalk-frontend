@@ -5,9 +5,14 @@ import api from '@/lib/api'
 
 interface MissingBrandReport {
   id: string
+  // 2026-09-24: `dealer_user_id` / `dealer_name` / `dealer_phone` are
+  // legacy column names — they hold the SUBMITTER's identity, which
+  // can be a Dealer OR a Farmer since the v2 Checkbox 3 arc added the
+  // farmer purchase-ack "Other" free-text path. `source` disambiguates.
   dealer_user_id: string
   dealer_name: string | null
   dealer_phone: string | null
+  source: 'DEALER' | 'FARMER'
   order_item_id: string | null
   brand_name_reported: string; manufacturer_name: string | null
   l1_type: string | null
@@ -16,6 +21,15 @@ interface MissingBrandReport {
   status: string; cm_notes: string | null
   reviewed_at: string | null
   created_at: string
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  DEALER: 'Dealer',
+  FARMER: 'Farmer',
+}
+const SOURCE_COLOUR: Record<string, string> = {
+  DEALER: 'bg-purple-100 text-purple-700 border border-purple-200',
+  FARMER: 'bg-emerald-100 text-emerald-700 border border-emerald-200',
 }
 
 // 2026-07-04 — user-facing terminology maps PENDING→"Submitted",
@@ -62,7 +76,7 @@ export default function BrandHandlingPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Brand Handling</h1>
         <p className="text-slate-500 text-sm mt-0.5">
-          Review and action brand submissions from dealers who couldn&apos;t find a required brand
+          Review and action brand submissions from dealers and farmers who couldn&apos;t find a required brand
         </p>
         <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
           <p className="text-xs text-blue-700">
@@ -102,12 +116,23 @@ export default function BrandHandlingPage() {
                         {STATUS_LABEL[r.status] || r.status}
                       </span>
                     </div>
-                    {/* 2026-07-04 — dealer contact block so SA can call
-                        the submitter for clarification before deciding. */}
+                    {/* 2026-07-04 — submitter contact block so SA can
+                        call for clarification before deciding.
+                        2026-09-24 — source badge (Dealer / Farmer) so
+                        the SA sees at a glance where the report came
+                        from. Farmer reports come from the "Other" path
+                        on the purchase-ack Brands screen (v2 Checkbox 3). */}
                     {(r.dealer_name || r.dealer_phone) && (
                       <div className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 mb-3 text-xs flex items-center justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="font-medium text-slate-700 truncate">{r.dealer_name || 'Dealer'}</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-medium text-slate-700 truncate">
+                              {r.dealer_name || SOURCE_LABEL[r.source] || 'Submitter'}
+                            </p>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${SOURCE_COLOUR[r.source] || 'bg-slate-100 text-slate-600'}`}>
+                              {SOURCE_LABEL[r.source] || r.source}
+                            </span>
+                          </div>
                           {r.dealer_phone && <p className="text-slate-400 font-mono">{r.dealer_phone}</p>}
                         </div>
                         {r.dealer_phone && (
@@ -134,7 +159,8 @@ export default function BrandHandlingPage() {
                     )}
                     <textarea value={notes[r.id] || ''}
                       onChange={e => setNotes(n => ({ ...n, [r.id]: e.target.value }))}
-                      rows={2} placeholder="Note to the dealer (optional; shown on rejection)…"
+                      rows={2}
+                      placeholder={`Note to the ${r.source === 'FARMER' ? 'farmer' : 'dealer'} (optional; shown on rejection)…`}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:outline-none mb-3 resize-none" />
                     <div className="flex gap-2">
                       <button onClick={() => updateStatus(r.id, 'APPROVED')} disabled={actingOn === r.id}
@@ -156,13 +182,18 @@ export default function BrandHandlingPage() {
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Reviewed ({done.length})</p>
               <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-50">
                 {done.map(r => (
-                  <div key={r.id} className="px-5 py-3.5 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-700">{r.brand_name_reported}</p>
+                  <div key={r.id} className="px-5 py-3.5 flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-slate-700 truncate">{r.brand_name_reported}</p>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ${SOURCE_COLOUR[r.source] || 'bg-slate-100 text-slate-600'}`}>
+                          {SOURCE_LABEL[r.source] || r.source}
+                        </span>
+                      </div>
                       {r.dealer_name && <p className="text-xs text-slate-500 mt-0.5">{r.dealer_name}{r.dealer_phone ? ` · ${r.dealer_phone}` : ''}</p>}
                       {r.cm_notes && <p className="text-xs text-slate-400 mt-0.5 italic">{r.cm_notes}</p>}
                     </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLOUR[r.status]}`}>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${STATUS_COLOUR[r.status]}`}>
                       {STATUS_LABEL[r.status] || r.status}
                     </span>
                   </div>
