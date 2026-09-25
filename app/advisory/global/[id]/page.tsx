@@ -470,8 +470,8 @@ export default function GlobalPackageDetailPage() {
     if (tlForm.from_type === 'CALENDAR') {
       fromVal = dayOfYear(parseInt(tlForm.from_month), parseInt(tlForm.from_day))
       toVal = dayOfYear(parseInt(tlForm.to_month), parseInt(tlForm.to_day))
-      if (fromVal >= toVal) {
-        setTlError('FROM date must be earlier than TO date in the calendar year.')
+      if (fromVal > toVal) {
+        setTlError('FROM date cannot be after TO date in the calendar year.')
         return
       }
     } else {
@@ -529,8 +529,8 @@ export default function GlobalPackageDetailPage() {
     if (isCalendar) {
       fromVal = dayOfYear(parseInt(editTLForm.from_month), parseInt(editTLForm.from_day))
       toVal = dayOfYear(parseInt(editTLForm.to_month), parseInt(editTLForm.to_day))
-      if (fromVal >= toVal) {
-        setEditTLError('FROM date must be earlier than TO date in the calendar year.')
+      if (fromVal > toVal) {
+        setEditTLError('FROM date cannot be after TO date in the calendar year.')
         return
       }
     } else {
