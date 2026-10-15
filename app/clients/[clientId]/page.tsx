@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
+import SoilNutrientPanel from '@/components/SoilNutrientPanel'
 import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
 
@@ -438,6 +439,13 @@ export default function ClientDetailPage() {
           }
         </div>
       </div>
+
+      {/* Soil Nutrient Module panel — 2026-10-15 Phase 1 */}
+      {client.status === 'ACTIVE' && (
+        <div className="mb-5">
+          <SoilNutrientPanel clientId={clientId as string} />
+        </div>
+      )}
 
       {/* CM Assignment section */}
       {client.status === 'ACTIVE' && (

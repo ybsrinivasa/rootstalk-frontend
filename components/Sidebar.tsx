@@ -96,6 +96,27 @@ function IconLock() {
     </svg>
   )
 }
+function IconDroplet() {
+  return (
+    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 2.69l5.66 5.66a8 8 0 11-11.31 0L12 2.69z" />
+    </svg>
+  )
+}
+function IconFlask() {
+  return (
+    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 3v6l-5 10a2 2 0 002 3h12a2 2 0 002-3L15 9V3M9 3h6M9 10h6" />
+    </svg>
+  )
+}
+function IconBoxes() {
+  return (
+    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+    </svg>
+  )
+}
 
 // ── Nav definition ─────────────────────────────────────────────────────────────
 interface NavItem {
@@ -130,6 +151,13 @@ const ALL_NAV: NavItem[] = [
   { href: '/cha/global',           label: 'Global CHA Library', Icon: IconBeaker,     roles: ['SA', 'CM'],        group: 'CONTENT' },
   { href: '/brand-handling',       label: 'Brand Handling',     Icon: IconTag,        roles: ['SA', 'CM'],        group: 'CONTENT' },
   { href: '/volume-calculations',  label: 'Volume Formulas',    Icon: IconBeaker,     roles: ['SA', 'CM'],        group: 'CONTENT' },
+  // SOIL NUTRIENT (2026-10-15, Decisions L, N, P) — platform-wide seeded
+  // reference data for the Soil Nutrient Management module. Clients
+  // consume this list; SA and CM maintain it (Decision L3).
+  { href: '/soil-nutrient/parameters',         label: 'Soil Parameters',    Icon: IconDroplet, roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
+  { href: '/soil-nutrient/product-categories', label: 'Product Categories', Icon: IconBoxes,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
+  { href: '/soil-nutrient/preset-profiles',    label: 'Preset Profiles',    Icon: IconFlask,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
+  { href: '/soil-nutrient/fallback',           label: 'Fallback Catalogue', Icon: IconBoxes,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
   // MY WORK
   { href: '/my-clients',           label: 'My Clients',         Icon: IconBriefcase,  roles: ['CM'],              group: 'MY WORK' },
   { href: '/rm',                   label: 'RM Support Desk',    Icon: IconHeadphones, roles: ['SA', 'RM'],        group: 'MY WORK' },
@@ -143,7 +171,7 @@ const ALL_NAV: NavItem[] = [
   { href: '/change-password',      label: 'Change Password',    Icon: IconLock,       roles: ['SA', 'CM', 'RM'],  group: 'TEAM' },
 ]
 
-const GROUP_ORDER = ['PLATFORM', 'CONTENT', 'MY WORK', 'COACHING', 'TEAM']
+const GROUP_ORDER = ['PLATFORM', 'CONTENT', 'SOIL NUTRIENT', 'MY WORK', 'COACHING', 'TEAM']
 
 function GroupLabel({ label }: { label: string }) {
   return (
