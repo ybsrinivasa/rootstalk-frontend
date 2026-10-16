@@ -166,6 +166,10 @@ const ALL_NAV: NavItem[] = [
   // COACH + RM, etc.) all see this entry.
   { href: '/coaching',             label: 'Coaching Sessions',  Icon: IconGraduation, roles: ['SA', 'COACH'],     group: 'COACHING' },
   { href: '/coaching/certified',   label: 'Certified Students', Icon: IconGraduation, roles: ['SA', 'COACH'],     group: 'COACHING' },
+  // 2026-10-16 — Neytiri aggregation of student Moment 2 feedback.
+  // Settled design: SA + CM see this (not individual coaches, so
+  // the privacy promise to students stays intact).
+  { href: '/coaching/feedback',    label: 'Student Feedback',   Icon: IconGraduation, roles: ['SA', 'CM'],        group: 'COACHING' },
   // TEAM
   { href: '/users',                label: 'Team Users',         Icon: IconUsers,      roles: ['SA'],              group: 'TEAM' },
   { href: '/change-password',      label: 'Change Password',    Icon: IconLock,       roles: ['SA', 'CM', 'RM'],  group: 'TEAM' },
