@@ -132,11 +132,43 @@ export default function CoachingSessionDetailPage() {
   const [inviteEmail, setInviteEmail] = useState('')
   const [lastInviteLink, setLastInviteLink] = useState<string | null>(null)
 
+  // 2026-10-16 — Moment 2 (student feedback) tracking per student.
+  // Fetched only for CLOSED sessions; keyed by student_id.
+  const [moment2, setMoment2] = useState<Record<string, {
+    status: 'not_requested' | 'pending' | 'submitted'
+    requested_at: string | null
+    submitted_at: string | null
+    reminder_sent_at: string | null
+    coach_nudge_sent_at: string | null
+  }>>({})
+  const [reviewFeedback, setReviewFeedback] = useState<{
+    student_id: string
+    submitted_at: string
+    content: Record<string, unknown>
+  } | null>(null)
+
   const load = useCallback(async () => {
     setLoading(true); setError('')
     try {
       const { data } = await api.get<SessionDetail>(`/coaching/sessions/${sessionId}`)
       setSession(data)
+      // Fetch Moment 2 status for each student on CLOSED sessions.
+      if (data.status.startsWith('CLOSED_') && data.students.length) {
+        const statuses: typeof moment2 = {}
+        await Promise.all(data.students.map(async s => {
+          try {
+            const r = await api.get(`/coaching/sessions/${sessionId}/students/${s.id}/moment2-status`)
+            statuses[s.id] = r.data
+          } catch {
+            statuses[s.id] = {
+              status: 'not_requested',
+              requested_at: null, submitted_at: null,
+              reminder_sent_at: null, coach_nudge_sent_at: null,
+            }
+          }
+        }))
+        setMoment2(statuses)
+      }
     } catch (e) {
       setError(extractErrorMessage(e, 'Failed to load session'))
     } finally {
@@ -262,6 +294,33 @@ export default function CoachingSessionDetailPage() {
       await load()
     } catch (e) {
       setError(extractErrorMessage(e, 'Failed to update certification'))
+    } finally { setBusyAction(null) }
+  }
+
+  // 2026-10-16 — Moment 2 (student feedback) actions.
+  async function captureFeedback(sid: string) {
+    setBusyAction(`capture-${sid}`); setError('')
+    try {
+      await api.post(`/coaching/sessions/${sessionId}/students/${sid}/capture-feedback`)
+      // Refresh status for this student
+      const r = await api.get(`/coaching/sessions/${sessionId}/students/${sid}/moment2-status`)
+      setMoment2(prev => ({ ...prev, [sid]: r.data }))
+    } catch (e) {
+      setError(extractErrorMessage(e, 'Failed to capture feedback'))
+    } finally { setBusyAction(null) }
+  }
+
+  async function openFeedbackReview(sid: string) {
+    setBusyAction(`review-${sid}`); setError('')
+    try {
+      const r = await api.get(`/coaching/sessions/${sessionId}/students/${sid}/moment2-content`)
+      setReviewFeedback({
+        student_id: sid,
+        submitted_at: r.data.submitted_at,
+        content: r.data.content,
+      })
+    } catch (e) {
+      setError(extractErrorMessage(e, 'Failed to open feedback'))
     } finally { setBusyAction(null) }
   }
 
@@ -461,6 +520,9 @@ export default function CoachingSessionDetailPage() {
                   sessionStatus={session.status}
                   busyAction={busyAction}
                   onRolesChange={setPwaRoles}
+                  moment2Status={moment2[st.id] || { status: 'not_requested', requested_at: null, submitted_at: null, reminder_sent_at: null, coach_nudge_sent_at: null }}
+                  onCaptureFeedback={captureFeedback}
+                  onReviewFeedback={openFeedbackReview}
                   onCertify={setStudentCertification}
                   onGenerateCertificate={generateCertificate}
                   onViewWorkspace={viewStudentWorkspace} />
@@ -519,6 +581,37 @@ export default function CoachingSessionDetailPage() {
           </details>
         )}
       </div>
+
+      {/* Review Feedback modal — post-cert read of student's Moment 2 */}
+      {reviewFeedback && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={() => setReviewFeedback(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col"
+            onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-slate-200 flex items-start justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">Student Feedback</h2>
+                <p className="text-xs text-slate-500">
+                  Submitted {new Date(reviewFeedback.submitted_at).toLocaleString()}
+                </p>
+              </div>
+              <button onClick={() => setReviewFeedback(null)}
+                className="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              <pre className="text-xs text-slate-700 whitespace-pre-wrap font-mono bg-slate-50 border border-slate-200 rounded p-4">
+                {JSON.stringify(reviewFeedback.content, null, 2)}
+              </pre>
+            </div>
+            <div className="p-4 border-t border-slate-200 flex justify-end">
+              <button onClick={() => setReviewFeedback(null)}
+                className="text-sm text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-100">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   )
 }
@@ -541,6 +634,7 @@ const GRADE_COLOUR: Record<string, string> = {
 function StudentRow({
   student, sessionStatus, busyAction, onRolesChange, onCertify,
   onGenerateCertificate, onViewWorkspace,
+  moment2Status, onCaptureFeedback, onReviewFeedback,
 }: {
   student: StudentDetail
   sessionStatus: string
@@ -549,6 +643,15 @@ function StudentRow({
   onCertify: (sid: string, certified: boolean, grade: string | null) => void
   onGenerateCertificate: (sid: string) => void
   onViewWorkspace: (sid: string) => void
+  moment2Status: {
+    status: 'not_requested' | 'pending' | 'submitted'
+    requested_at: string | null
+    submitted_at: string | null
+    reminder_sent_at: string | null
+    coach_nudge_sent_at: string | null
+  }
+  onCaptureFeedback: (sid: string) => void
+  onReviewFeedback: (sid: string) => void
 }) {
   const isDraft = sessionStatus === 'DRAFT'
   const isActive = sessionStatus === 'ACTIVE'
@@ -628,12 +731,87 @@ function StudentRow({
         </div>
       )}
 
+      {/* Feedback capture (post-close) — Moment 2 (2026-10-16).
+          Must be captured before certification can be issued. */}
+      {isClosed && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-2">
+            Student Feedback
+          </p>
+          {moment2Status.status === 'not_requested' && (
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-slate-600">
+                Trigger the feedback email before certifying.
+              </p>
+              <button onClick={() => onCaptureFeedback(student.id)}
+                disabled={busyAction !== null}
+                className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex-shrink-0 disabled:opacity-50">
+                {busyAction === `capture-${student.id}` ? '…' : '✉ Capture Feedback'}
+              </button>
+            </div>
+          )}
+          {moment2Status.status === 'pending' && (
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                    Pending
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    sent {moment2Status.requested_at && new Date(moment2Status.requested_at).toLocaleString()}
+                  </span>
+                </div>
+                <button onClick={() => onCaptureFeedback(student.id)}
+                  disabled={busyAction !== null}
+                  className="text-xs text-slate-600 border border-slate-300 hover:bg-slate-100 font-medium px-3 py-1.5 rounded-lg disabled:opacity-50">
+                  Resend email
+                </button>
+              </div>
+              {moment2Status.coach_nudge_sent_at && (
+                <p className="text-[11px] text-red-700 mt-2 bg-red-50 border border-red-200 rounded px-2 py-1">
+                  ⚠ No response for 4 days — consider reaching out to the student personally (phone / WhatsApp).
+                </p>
+              )}
+            </div>
+          )}
+          {moment2Status.status === 'submitted' && (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">
+                  ✓ Submitted
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  {moment2Status.submitted_at && new Date(moment2Status.submitted_at).toLocaleString()}
+                </span>
+              </div>
+              {student.certified_at ? (
+                <button onClick={() => onReviewFeedback(student.id)}
+                  disabled={busyAction !== null}
+                  className="text-xs text-blue-700 border border-blue-200 hover:bg-blue-50 font-medium px-3 py-1.5 rounded-lg disabled:opacity-50">
+                  {busyAction === `review-${student.id}` ? '…' : 'Review feedback'}
+                </button>
+              ) : (
+                <span className="text-[11px] text-slate-500 italic">
+                  Content unlocks after certification.
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Certification (post-close) — grade dropdown + Certify/Uncertify */}
       {isClosed && (
         <div className="mt-3 pt-3 border-t border-slate-100">
           <p className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-2">
             Certification
           </p>
+          {moment2Status.status !== 'submitted' && !student.certified_at && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
+              Capture + receive the student&apos;s feedback above before the Certify button opens.
+            </p>
+          )}
           <div className="flex items-center gap-2 flex-wrap">
             <label className="text-xs text-slate-600">Grade:</label>
             <select value={gradeChoice}
@@ -660,8 +838,9 @@ function StudentRow({
               </>
             ) : (
               <button onClick={() => onCertify(student.id, true, gradeChoice)}
-                disabled={busyAction !== null}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg disabled:opacity-50">
+                disabled={busyAction !== null || moment2Status.status !== 'submitted'}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg disabled:opacity-50"
+                title={moment2Status.status !== 'submitted' ? 'Feedback must be submitted first' : ''}>
                 {busyAction === `cert-${student.id}` ? '…' : 'Certify'}
               </button>
             )}
