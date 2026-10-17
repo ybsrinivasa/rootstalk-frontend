@@ -154,10 +154,9 @@ const ALL_NAV: NavItem[] = [
   // SOIL NUTRIENT (2026-10-15, Decisions L, N, P) — platform-wide seeded
   // reference data for the Soil Nutrient Management module. Clients
   // consume this list; SA and CM maintain it (Decision L3).
-  { href: '/soil-nutrient/parameters',         label: 'Soil Parameters',    Icon: IconDroplet, roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
-  { href: '/soil-nutrient/product-categories', label: 'Product Categories', Icon: IconBoxes,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
-  { href: '/soil-nutrient/preset-profiles',    label: 'Preset Profiles',    Icon: IconFlask,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
-  { href: '/soil-nutrient/fallback',           label: 'Fallback Catalogue', Icon: IconBoxes,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
+  { href: '/soil-nutrient/parameters',      label: 'Soil Parameters',    Icon: IconDroplet, roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
+  { href: '/soil-nutrient/preset-profiles', label: 'Preset Profiles',    Icon: IconFlask,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
+  { href: '/soil-nutrient/fallback',        label: 'Fallback Catalogue', Icon: IconBoxes,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
   // MY WORK
   { href: '/my-clients',           label: 'My Clients',         Icon: IconBriefcase,  roles: ['CM'],              group: 'MY WORK' },
   { href: '/rm',                   label: 'RM Support Desk',    Icon: IconHeadphones, roles: ['SA', 'RM'],        group: 'MY WORK' },
