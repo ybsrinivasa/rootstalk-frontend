@@ -91,6 +91,12 @@ export default function ClientDetailPage() {
   // Manufacturer" dropdown on the client-edit modal. Only rendered
   // when is_manufacturer is true. Sorted server-side by name.
   const [coshMfrs, setCoshMfrs] = useState<{ cosh_id: string; name: string }[]>([])
+  // 2026-10-17 (Phase 6a / Decision U) — multi-select Linked
+  // Manufacturers for the Soil Nutrient module's product picker.
+  // Independent of the single `cosh_manufacturer_id` above (QR).
+  const [linkedMfrs, setLinkedMfrs] = useState<{ cosh_id: string; name: string }[]>([])
+  const [savingLinkedMfrs, setSavingLinkedMfrs] = useState(false)
+  const [linkedMfrsSearch, setLinkedMfrsSearch] = useState('')
   // Per-client CA table (2026-07-07)
   const [showCAs, setShowCAs] = useState(false)
   const [cas, setCAs] = useState<CARow[]>([])
@@ -110,6 +116,28 @@ export default function ClientDetailPage() {
       .then(r => setCoshMfrs(r.data))
       .catch(() => setCoshMfrs([]))
   }, [])
+
+  // Load the Client's linked Manufacturers (Phase 6a / Decision U).
+  useEffect(() => {
+    if (!clientId) return
+    api.get<{ cosh_id: string; name: string }[]>(`/admin/clients/${clientId}/manufacturers`)
+      .then(r => setLinkedMfrs(r.data))
+      .catch(() => setLinkedMfrs([]))
+  }, [clientId])
+
+  async function saveLinkedManufacturers(nextIds: string[]) {
+    setSavingLinkedMfrs(true)
+    try {
+      await api.put(`/admin/clients/${clientId}/manufacturers`, { cosh_ids: nextIds })
+      // Re-fetch so names are consistent with Cosh master
+      const r = await api.get<{ cosh_id: string; name: string }[]>(`/admin/clients/${clientId}/manufacturers`)
+      setLinkedMfrs(r.data)
+    } catch {
+      // keep local state on failure; user retries
+    } finally {
+      setSavingLinkedMfrs(false)
+    }
+  }
 
   async function load() {
     try {
@@ -666,7 +694,7 @@ export default function ClientDetailPage() {
               {editForm.is_manufacturer && (
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-2">
-                    Cosh Manufacturer
+                    Cosh Manufacturer <span className="text-slate-400 font-normal">(for QR Brand Portfolio)</span>
                   </label>
                   <select
                     value={editForm.cosh_manufacturer_id || ''}
@@ -679,6 +707,74 @@ export default function ClientDetailPage() {
                   </select>
                   <p className="text-xs text-slate-400 mt-1">
                     Links this client to a Cosh manufacturer so their pesticide / fertilizer brands surface automatically on the QR Brand Portfolio. Seed varieties come from RootsTalk and don&apos;t use this link.
+                  </p>
+                </div>
+              )}
+
+              {/* 2026-10-17 (Phase 6a / Decision U) — Linked Manufacturers
+                  multi-select for the Soil Nutrient module's product
+                  picker. Independent of the single-select QR picker
+                  above. Clients can be linked to multiple Manufacturers;
+                  the Client Portal product selector filters Cosh
+                  products to just those Manufacturers' output. */}
+              {editForm.is_manufacturer && (
+                <div className="border-t border-slate-100 pt-4">
+                  <label className="block text-xs font-medium text-slate-600 mb-2">
+                    Linked Manufacturers <span className="text-slate-400 font-normal">(for Soil Nutrient product catalog)</span>
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 mb-2 min-h-[32px]">
+                    {linkedMfrs.length === 0 ? (
+                      <span className="text-xs text-slate-400 italic">
+                        No manufacturers linked yet.
+                      </span>
+                    ) : (
+                      linkedMfrs.map(m => (
+                        <span key={m.cosh_id}
+                          className="inline-flex items-center gap-1.5 text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded border border-purple-200">
+                          {m.name}
+                          <button type="button"
+                            disabled={savingLinkedMfrs}
+                            onClick={() => {
+                              const next = linkedMfrs
+                                .filter(x => x.cosh_id !== m.cosh_id)
+                                .map(x => x.cosh_id)
+                              saveLinkedManufacturers(next)
+                            }}
+                            className="text-purple-600 hover:text-purple-900 disabled:opacity-50">×</button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                  <input type="text"
+                    value={linkedMfrsSearch}
+                    onChange={e => setLinkedMfrsSearch(e.target.value)}
+                    placeholder="Search Cosh manufacturers to add…"
+                    disabled={savingLinkedMfrs}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white disabled:opacity-50" />
+                  {linkedMfrsSearch.trim() && (
+                    <div className="mt-1 max-h-48 overflow-y-auto border border-slate-200 rounded-lg">
+                      {coshMfrs
+                        .filter(m =>
+                          m.name.toLowerCase().includes(linkedMfrsSearch.toLowerCase())
+                          && !linkedMfrs.some(x => x.cosh_id === m.cosh_id)
+                        )
+                        .slice(0, 50)
+                        .map(m => (
+                          <button key={m.cosh_id} type="button"
+                            disabled={savingLinkedMfrs}
+                            onClick={() => {
+                              const nextIds = [...linkedMfrs.map(x => x.cosh_id), m.cosh_id]
+                              saveLinkedManufacturers(nextIds)
+                              setLinkedMfrsSearch('')
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 border-b border-slate-100 last:border-0 disabled:opacity-50">
+                            {m.name}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-400 mt-2">
+                    Pick one or more Cosh Manufacturers this Client is associated with. The Client Portal Products page will filter the Cosh product catalog to just these Manufacturers&apos; products (with a toggle for the Client to expand to all Cosh products if they want to list market products they don&apos;t manufacture themselves).
                   </p>
                 </div>
               )}
