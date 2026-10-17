@@ -157,6 +157,7 @@ const ALL_NAV: NavItem[] = [
   { href: '/soil-nutrient/parameters',      label: 'Soil Parameters',    Icon: IconDroplet, roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
   { href: '/soil-nutrient/preset-profiles', label: 'Preset Profiles',    Icon: IconFlask,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
   { href: '/soil-nutrient/fallback',        label: 'Fallback Catalogue', Icon: IconBoxes,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
+  { href: '/soil-nutrient/mock',            label: 'Mock Engine',        Icon: IconFlask,   roles: ['SA', 'CM'], group: 'SOIL NUTRIENT' },
   // MY WORK
   { href: '/my-clients',           label: 'My Clients',         Icon: IconBriefcase,  roles: ['CM'],              group: 'MY WORK' },
   { href: '/rm',                   label: 'RM Support Desk',    Icon: IconHeadphones, roles: ['SA', 'RM'],        group: 'MY WORK' },
