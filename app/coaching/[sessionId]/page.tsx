@@ -178,9 +178,12 @@ export default function CoachingSessionDetailPage() {
         }))
         setMoment2(statuses)
       }
-      // Fetch Moment 1 (expectations) for every student on ACTIVE or
-      // CLOSED sessions. DRAFT sessions have no students yet, so skip.
-      if (data.status !== 'DRAFT' && data.students.length) {
+      // Fetch Moment 1 (expectations) for every approved student,
+      // regardless of session status. Students self-register and
+      // (optionally) fill Moment 1 BEFORE the coach approves them —
+      // which itself happens before Start Session — so DRAFT sessions
+      // genuinely have expectation data worth reading.
+      if (data.students.length) {
         const m1: typeof moment1 = {}
         await Promise.all(data.students.map(async s => {
           try {
@@ -751,9 +754,11 @@ function StudentRow({
       </div>
 
       {/* Expectations — Moment 1 answers, read-only coach view (2026-10-20).
-          Visible throughout the session; collapsed by default. */}
-      {(isActive || isClosed) && (
-        <div className="mt-3 pt-3 border-t border-slate-100">
+          Visible for every approved student across DRAFT / ACTIVE /
+          CLOSED, because Moment 1 is captured during self-registration
+          (before the coach approves and before Start Session fires),
+          so the data exists even on DRAFT sessions. */}
+      <div className="mt-3 pt-3 border-t border-slate-100">
           <button type="button"
             onClick={() => setExpectationsOpen(o => !o)}
             className="w-full flex items-center justify-between text-left group">
@@ -803,7 +808,6 @@ function StudentRow({
             </div>
           )}
         </div>
-      )}
 
       {/* Per-workspace activity counts — coach's evaluation context */}
       {(isActive || isClosed) && (
