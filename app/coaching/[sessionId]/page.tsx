@@ -147,6 +147,15 @@ export default function CoachingSessionDetailPage() {
     content: Record<string, unknown>
   } | null>(null)
 
+  // 2026-10-20 — Moment 1 expectations, fetched for every student on
+  // ACTIVE and CLOSED sessions so the coach can read what each student
+  // came in hoping for. Unlike Moment 2 content (gated behind
+  // certification), Moment 1 is visible throughout.
+  const [moment1, setMoment1] = useState<Record<string, {
+    answers: Record<string, string>
+    updated_at: string | null
+  }>>({})
+
   const load = useCallback(async () => {
     setLoading(true); setError('')
     try {
@@ -168,6 +177,20 @@ export default function CoachingSessionDetailPage() {
           }
         }))
         setMoment2(statuses)
+      }
+      // Fetch Moment 1 (expectations) for every student on ACTIVE or
+      // CLOSED sessions. DRAFT sessions have no students yet, so skip.
+      if (data.status !== 'DRAFT' && data.students.length) {
+        const m1: typeof moment1 = {}
+        await Promise.all(data.students.map(async s => {
+          try {
+            const r = await api.get(`/coaching/sessions/${sessionId}/students/${s.id}/moment1`)
+            m1[s.id] = r.data
+          } catch {
+            m1[s.id] = { answers: {}, updated_at: null }
+          }
+        }))
+        setMoment1(m1)
       }
     } catch (e) {
       setError(extractErrorMessage(e, 'Failed to load session'))
@@ -521,6 +544,7 @@ export default function CoachingSessionDetailPage() {
                   busyAction={busyAction}
                   onRolesChange={setPwaRoles}
                   moment2Status={moment2[st.id] || { status: 'not_requested', requested_at: null, submitted_at: null, reminder_sent_at: null, coach_nudge_sent_at: null }}
+                  moment1={moment1[st.id] || { answers: {}, updated_at: null }}
                   onCaptureFeedback={captureFeedback}
                   onReviewFeedback={openFeedbackReview}
                   onCertify={setStudentCertification}
@@ -631,10 +655,25 @@ const GRADE_COLOUR: Record<string, string> = {
 }
 
 
+// Moment 1 (expectations) questions — mirror of the keys authored on
+// the student onboarding form in the CA Portal. Kept here so the SA
+// Portal renders the full question alongside each student answer.
+const MOMENT1_QUESTIONS: { key: string; label: string }[] = [
+  { key: 'q_change_digital',
+    label: 'If you could change one thing about the way we use digital tools in farming today, what would it be?' },
+  { key: 'q_favorite_tech',
+    label: "Think of an app or technology you've used that just felt right. What was it, and what did you like?" },
+  { key: 'q_hope_explore',
+    label: "Is there anything you're hoping to notice or try out while exploring RootsTalk?" },
+  { key: 'q_teach_farmer',
+    label: 'If you could teach a farmer one thing using digital tools, what would it be?' },
+]
+
 function StudentRow({
   student, sessionStatus, busyAction, onRolesChange, onCertify,
   onGenerateCertificate, onViewWorkspace,
   moment2Status, onCaptureFeedback, onReviewFeedback,
+  moment1,
 }: {
   student: StudentDetail
   sessionStatus: string
@@ -652,12 +691,15 @@ function StudentRow({
   }
   onCaptureFeedback: (sid: string) => void
   onReviewFeedback: (sid: string) => void
+  moment1: { answers: Record<string, string>; updated_at: string | null }
 }) {
   const isDraft = sessionStatus === 'DRAFT'
   const isActive = sessionStatus === 'ACTIVE'
   const isClosed = sessionStatus.startsWith('CLOSED_')
   const currentRoles = new Set(student.assigned_pwa_roles || [])
   const [gradeChoice, setGradeChoice] = useState<string>(student.grade || 'GOOD')
+  const [expectationsOpen, setExpectationsOpen] = useState(false)
+  const answeredCount = MOMENT1_QUESTIONS.filter(q => (moment1.answers[q.key] || '').trim()).length
 
   function toggleRole(role: string) {
     const next = new Set(currentRoles)
@@ -707,6 +749,61 @@ function StudentRow({
           </button>
         )}
       </div>
+
+      {/* Expectations — Moment 1 answers, read-only coach view (2026-10-20).
+          Visible throughout the session; collapsed by default. */}
+      {(isActive || isClosed) && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <button type="button"
+            onClick={() => setExpectationsOpen(o => !o)}
+            className="w-full flex items-center justify-between text-left group">
+            <div className="flex items-center gap-2">
+              <p className="text-xs uppercase tracking-wider text-slate-500 font-medium">
+                Expectations
+              </p>
+              {answeredCount > 0 ? (
+                <span className="text-[11px] text-slate-500">
+                  {answeredCount} of {MOMENT1_QUESTIONS.length} answered
+                </span>
+              ) : (
+                <span className="text-[11px] text-slate-400 italic">
+                  none captured
+                </span>
+              )}
+            </div>
+            <span className="text-slate-400 text-sm">{expectationsOpen ? '▴' : '▾'}</span>
+          </button>
+          {expectationsOpen && (
+            <div className="mt-2 space-y-2">
+              {answeredCount === 0 ? (
+                <p className="text-xs text-slate-500 italic bg-slate-50 border border-slate-200 rounded px-3 py-2">
+                  The student didn&apos;t capture any expectations at onboarding.
+                  Moment 1 is optional, so this isn&apos;t unusual — some students come without specific expectations.
+                </p>
+              ) : (
+                MOMENT1_QUESTIONS.map(q => {
+                  const answer = (moment1.answers[q.key] || '').trim()
+                  return (
+                    <div key={q.key} className="bg-slate-50 border border-slate-200 rounded px-3 py-2">
+                      <p className="text-[11px] text-slate-500 mb-1">{q.label}</p>
+                      {answer ? (
+                        <p className="text-sm text-slate-800 whitespace-pre-wrap">{answer}</p>
+                      ) : (
+                        <p className="text-xs text-slate-400 italic">(skipped)</p>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+              {moment1.updated_at && (
+                <p className="text-[10px] text-slate-400">
+                  Last updated {new Date(moment1.updated_at).toLocaleString()}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Per-workspace activity counts — coach's evaluation context */}
       {(isActive || isClosed) && (
