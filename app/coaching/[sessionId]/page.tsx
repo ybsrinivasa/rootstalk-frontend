@@ -28,6 +28,47 @@ import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
 
 
+// Moment 2 student-feedback shape (mirror of the submit payload in
+// rootstalk-client-portal/app/f/[token]/page.tsx). The coach reads this
+// in the "Student Feedback" modal; keeping the shape typed here lets us
+// render each field with its question text instead of a raw JSON dump.
+interface FeedbackContent {
+  section1?: Record<string, {
+    mode: 'changed' | 'helped' | 'not_addressed' | null
+    text: string
+  }>
+  section2?: {
+    compare_to_tech?: string
+    comparison?: 'much_worse' | 'worse' | 'similar' | 'better' | 'much_better' | null
+    comparison_reason?: string
+  }
+  section3?: {
+    star_rating?: number
+    most_valuable?: string
+    would_change?: string
+    would_recommend?: 'yes' | 'maybe' | 'no' | null
+  }
+}
+
+const SECTION1_MODE_LABEL: Record<string, string> = {
+  changed:       'I see this differently now',
+  helped:        'RootsTalk helped me think about this',
+  not_addressed: "RootsTalk didn't address this",
+}
+const COMPARE_LABEL: Record<string, string> = {
+  much_worse:  'Much worse',
+  worse:       'Worse',
+  similar:     'Similar',
+  better:      'Better',
+  much_better: 'Much better',
+}
+const RECOMMEND_LABEL: Record<string, string> = {
+  yes:   'Yes',
+  maybe: 'Maybe',
+  no:    'No',
+}
+
+
 interface ReferenceClientMini { id: string; full_name: string; short_name: string }
 interface CoachMini { id: string; name: string | null; email: string | null }
 interface InviteDetail {
@@ -143,8 +184,13 @@ export default function CoachingSessionDetailPage() {
   }>>({})
   const [reviewFeedback, setReviewFeedback] = useState<{
     student_id: string
+    student_name: string
     submitted_at: string
-    content: Record<string, unknown>
+    content: FeedbackContent
+    // Student's Moment 1 answers (if captured) — threaded in so the
+    // modal can show "You said X at the start → Now: Y" context for
+    // each section-1 question.
+    moment1_answers: Record<string, string>
   } | null>(null)
 
   // 2026-10-20 — Moment 1 expectations, fetched for every student on
@@ -340,10 +386,13 @@ export default function CoachingSessionDetailPage() {
     setBusyAction(`review-${sid}`); setError('')
     try {
       const r = await api.get(`/coaching/sessions/${sessionId}/students/${sid}/moment2-content`)
+      const student = session?.students.find(s => s.id === sid)
       setReviewFeedback({
         student_id: sid,
+        student_name: student?.student_name || student?.student_email || 'Student',
         submitted_at: r.data.submitted_at,
-        content: r.data.content,
+        content: r.data.content as FeedbackContent,
+        moment1_answers: moment1[sid]?.answers || {},
       })
     } catch (e) {
       setError(extractErrorMessage(e, 'Failed to open feedback'))
@@ -609,35 +658,15 @@ export default function CoachingSessionDetailPage() {
         )}
       </div>
 
-      {/* Review Feedback modal — post-cert read of student's Moment 2 */}
+      {/* Review Feedback modal — post-cert read of student's Moment 2.
+          2026-11-02: the content used to render as a raw JSON blob
+          (first live cohort coach found it unreadable). Now rendered
+          as sectioned prose with full question text and the student's
+          Moment 1 answers inlined above each Section-1 response so
+          the before→after shift is visible at a glance. */}
       {reviewFeedback && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={() => setReviewFeedback(null)}>
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col"
-            onClick={e => e.stopPropagation()}>
-            <div className="p-5 border-b border-slate-200 flex items-start justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">Student Feedback</h2>
-                <p className="text-xs text-slate-500">
-                  Submitted {new Date(reviewFeedback.submitted_at).toLocaleString()}
-                </p>
-              </div>
-              <button onClick={() => setReviewFeedback(null)}
-                className="text-slate-400 hover:text-slate-700">✕</button>
-            </div>
-            <div className="p-5 overflow-y-auto flex-1">
-              <pre className="text-xs text-slate-700 whitespace-pre-wrap font-mono bg-slate-50 border border-slate-200 rounded p-4">
-                {JSON.stringify(reviewFeedback.content, null, 2)}
-              </pre>
-            </div>
-            <div className="p-4 border-t border-slate-200 flex justify-end">
-              <button onClick={() => setReviewFeedback(null)}
-                className="text-sm text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-100">
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <FeedbackReviewModal data={reviewFeedback}
+          onClose={() => setReviewFeedback(null)} />
       )}
     </AdminLayout>
   )
@@ -1013,6 +1042,205 @@ function StudentRow({
           </p>
         </div>
       )}
+    </div>
+  )
+}
+
+
+// ── Student Feedback modal — formatted read of Moment 2 ───────────────
+//
+// Reads the three-section Moment 2 payload (see
+// rootstalk-client-portal/app/f/[token]/page.tsx for the submit form)
+// and lays it out for the coach as human prose. Section 1 pairs each
+// student response with the Moment 1 answer it refers back to, so the
+// coach sees "They said X → Now they feel Y" instead of just
+// "mode: changed, text: ...".
+//
+// Empty / unanswered fields are rendered as `—` rather than hidden,
+// so the coach can see where the student skipped a question.
+
+function FeedbackReviewModal({
+  data, onClose,
+}: {
+  data: {
+    student_id: string
+    student_name: string
+    submitted_at: string
+    content: FeedbackContent
+    moment1_answers: Record<string, string>
+  }
+  onClose: () => void
+}) {
+  const { content, moment1_answers, student_name, submitted_at } = data
+  const s1 = content.section1 || {}
+  const s2 = content.section2 || {}
+  const s3 = content.section3 || {}
+
+  // Which Section-1 keys to render + in what order. Prefer the authored
+  // MOMENT1_QUESTIONS order so unanswered keys still surface in a
+  // predictable slot; append any unknown keys at the end so new
+  // questions don't silently disappear if someone edits the form.
+  const seenKeys = new Set<string>()
+  const section1Keys: string[] = []
+  for (const q of MOMENT1_QUESTIONS) {
+    if (q.key in s1 || q.key in moment1_answers) {
+      section1Keys.push(q.key)
+      seenKeys.add(q.key)
+    }
+  }
+  for (const k of Object.keys(s1)) {
+    if (!seenKeys.has(k)) section1Keys.push(k)
+  }
+  for (const k of Object.keys(moment1_answers)) {
+    if (!seenKeys.has(k)) section1Keys.push(k)
+  }
+
+  const questionLabel = (key: string) =>
+    MOMENT1_QUESTIONS.find(q => q.key === key)?.label || key
+
+  const rating = s3.star_rating ?? 0
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+      onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-slate-200 flex items-start justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Student Feedback</h2>
+            <p className="text-xs text-slate-500">
+              {student_name} · submitted {new Date(submitted_at).toLocaleString()}
+            </p>
+          </div>
+          <button onClick={onClose}
+            className="text-slate-400 hover:text-slate-700">✕</button>
+        </div>
+
+        <div className="p-5 overflow-y-auto flex-1 space-y-5">
+          {/* Overall snapshot — Section 3 star rating + headline fields
+              surfaced up top because that is what most coaches look at
+              first. */}
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+            <div className="flex items-baseline gap-3 mb-2">
+              <h3 className="text-sm font-semibold text-slate-900">Overall</h3>
+              {rating > 0 ? (
+                <span className="text-amber-500 text-base">
+                  {'★'.repeat(rating)}<span className="text-slate-300">{'★'.repeat(5 - rating)}</span>
+                  <span className="text-xs text-slate-500 ml-1.5">{rating}/5</span>
+                </span>
+              ) : (
+                <span className="text-xs text-slate-400">No rating</span>
+              )}
+              {s3.would_recommend && (
+                <span className="text-xs text-slate-500">
+                  · Would recommend: <strong className="text-slate-800">
+                    {RECOMMEND_LABEL[s3.would_recommend] || s3.would_recommend}
+                  </strong>
+                </span>
+              )}
+            </div>
+            <div className="grid sm:grid-cols-2 gap-3 mt-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-wider text-emerald-700 font-semibold mb-1">
+                  Most valuable
+                </p>
+                <p className="text-sm text-slate-800">
+                  {s3.most_valuable
+                    ? <>&ldquo;{s3.most_valuable}&rdquo;</>
+                    : <span className="text-slate-400">—</span>}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-1">
+                  Would change
+                </p>
+                <p className="text-sm text-slate-800">
+                  {s3.would_change
+                    ? <>&ldquo;{s3.would_change}&rdquo;</>
+                    : <span className="text-slate-400">—</span>}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2 — benchmark against another tech the student
+              named. Rendered as a single prose line + optional reason. */}
+          {(s2.compare_to_tech || s2.comparison || s2.comparison_reason) && (
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-slate-900 mb-2">
+                Compared to apps or tech they like
+              </h3>
+              <p className="text-sm text-slate-800">
+                {s2.compare_to_tech ? (
+                  <>Compared to <strong>{s2.compare_to_tech}</strong>, RootsTalk is </>
+                ) : (
+                  <>RootsTalk is </>
+                )}
+                <span className="font-medium">
+                  {s2.comparison
+                    ? (COMPARE_LABEL[s2.comparison] || s2.comparison).toLowerCase()
+                    : <span className="text-slate-400">— (not rated)</span>}
+                </span>
+                .
+              </p>
+              {s2.comparison_reason && (
+                <p className="text-sm text-slate-600 italic mt-1.5">
+                  &ldquo;{s2.comparison_reason}&rdquo;
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Section 1 — mirror of expectations. Each block pairs the
+              student's Moment 1 answer with their post-session reflection
+              so the coach sees the shift (or lack thereof) in one glance. */}
+          {section1Keys.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">
+                Looking back at expectations
+              </h3>
+              <div className="space-y-4">
+                {section1Keys.map(key => {
+                  const resp = s1[key]
+                  const originalAnswer = moment1_answers[key] || ''
+                  return (
+                    <div key={key} className="border-l-4 border-slate-200 pl-3">
+                      <p className="text-xs font-medium text-slate-600 mb-1.5">
+                        {questionLabel(key)}
+                      </p>
+                      {originalAnswer ? (
+                        <div className="text-xs text-slate-500 mb-2">
+                          <span className="italic">At the start they said: </span>
+                          <span className="text-slate-700">&ldquo;{originalAnswer}&rdquo;</span>
+                        </div>
+                      ) : null}
+                      {resp?.mode ? (
+                        <p className="text-sm text-slate-800 font-medium">
+                          {SECTION1_MODE_LABEL[resp.mode] || resp.mode}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-400">No response selected</p>
+                      )}
+                      {resp?.text && (
+                        <p className="text-sm text-slate-600 italic mt-1">
+                          &ldquo;{resp.text}&rdquo;
+                        </p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-slate-200 flex justify-end">
+          <button onClick={onClose}
+            className="text-sm text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-100">
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
