@@ -170,6 +170,10 @@ const ALL_NAV: NavItem[] = [
   // Settled design: SA + CM see this (not individual coaches, so
   // the privacy promise to students stays intact).
   { href: '/coaching/feedback',    label: 'Student Feedback',   Icon: IconGraduation, roles: ['SA', 'CM'],        group: 'COACHING' },
+  // 2026-11-04 — Testimonial + hiring portfolios students build up
+  // after certification. SA + COACH can browse / download CVs for
+  // partner-company intros.
+  { href: '/coaching/portfolios',  label: 'Student Portfolios', Icon: IconGraduation, roles: ['SA', 'COACH'],     group: 'COACHING' },
   // TEAM
   { href: '/users',                label: 'Team Users',         Icon: IconUsers,      roles: ['SA'],              group: 'TEAM' },
   { href: '/change-password',      label: 'Change Password',    Icon: IconLock,       roles: ['SA', 'CM', 'RM'],  group: 'TEAM' },
