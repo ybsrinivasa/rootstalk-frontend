@@ -52,6 +52,12 @@ export default function BrandHandlingPage() {
   const [loading, setLoading] = useState(true)
   const [actingOn, setActingOn] = useState<string | null>(null)
   const [notes, setNotes] = useState<Record<string, string>>({})
+  // 2026-11-04 — Rejected rows pile up fast (first coaching cohort
+  // generated ~10 test rejections in a day) and crowd the SA's view
+  // of real submissions. Hidden by default; toggle brings them back,
+  // and each row gets a Delete button so the SA can prune genuine
+  // noise (testing/training data).
+  const [showRejected, setShowRejected] = useState(false)
 
   const load = () =>
     api.get<MissingBrandReport[]>('/admin/missing-brand-reports')
@@ -68,8 +74,28 @@ export default function BrandHandlingPage() {
     } finally { setActingOn(null) }
   }
 
+  async function deleteReport(id: string, brandName: string) {
+    if (!confirm(`Delete rejected report "${brandName}"? This cannot be undone.`)) return
+    setActingOn(id)
+    try {
+      await api.delete(`/admin/missing-brand-reports/${id}`)
+      // Optimistic local removal — avoids a re-fetch that'd flicker
+      // the whole page back from empty state.
+      setReports(prev => prev.filter(r => r.id !== id))
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: { message?: string } | string } } }
+      const detail = err?.response?.data?.detail
+      const msg = typeof detail === 'object' ? detail?.message : (detail as string)
+      alert(msg || 'Could not delete that report.')
+    } finally { setActingOn(null) }
+  }
+
   const pending = reports.filter(r => r.status === 'PENDING')
-  const done = reports.filter(r => r.status !== 'PENDING')
+  // `done` is all non-PENDING. Rejected rows are hidden by default;
+  // toggle `showRejected` to bring them back for review / cleanup.
+  const doneAll = reports.filter(r => r.status !== 'PENDING')
+  const done = showRejected ? doneAll : doneAll.filter(r => r.status !== 'REJECTED')
+  const rejectedHiddenCount = doneAll.length - done.length
 
   return (
     <AdminLayout>
@@ -177,28 +203,56 @@ export default function BrandHandlingPage() {
               </div>
             </section>
           )}
-          {done.length > 0 && (
+          {(done.length > 0 || rejectedHiddenCount > 0) && (
             <section>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Reviewed ({done.length})</p>
-              <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-50">
-                {done.map(r => (
-                  <div key={r.id} className="px-5 py-3.5 flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-semibold text-slate-700 truncate">{r.brand_name_reported}</p>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ${SOURCE_COLOUR[r.source] || 'bg-slate-100 text-slate-600'}`}>
-                          {SOURCE_LABEL[r.source] || r.source}
-                        </span>
-                      </div>
-                      {r.dealer_name && <p className="text-xs text-slate-500 mt-0.5">{r.dealer_name}{r.dealer_phone ? ` · ${r.dealer_phone}` : ''}</p>}
-                      {r.cm_notes && <p className="text-xs text-slate-400 mt-0.5 italic">{r.cm_notes}</p>}
-                    </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${STATUS_COLOUR[r.status]}`}>
-                      {STATUS_LABEL[r.status] || r.status}
-                    </span>
-                  </div>
-                ))}
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  Reviewed ({done.length})
+                </p>
+                {(rejectedHiddenCount > 0 || showRejected) && (
+                  <button onClick={() => setShowRejected(v => !v)}
+                    className="text-xs font-semibold text-slate-600 hover:text-slate-900 underline">
+                    {showRejected
+                      ? 'Hide rejected'
+                      : `Show rejected (${rejectedHiddenCount})`}
+                  </button>
+                )}
               </div>
+              {done.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">
+                  No reviewed submissions outside the rejected ones.
+                </p>
+              ) : (
+                <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-50">
+                  {done.map(r => (
+                    <div key={r.id} className="px-5 py-3.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-semibold text-slate-700 truncate">{r.brand_name_reported}</p>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ${SOURCE_COLOUR[r.source] || 'bg-slate-100 text-slate-600'}`}>
+                            {SOURCE_LABEL[r.source] || r.source}
+                          </span>
+                        </div>
+                        {r.dealer_name && <p className="text-xs text-slate-500 mt-0.5">{r.dealer_name}{r.dealer_phone ? ` · ${r.dealer_phone}` : ''}</p>}
+                        {r.cm_notes && <p className="text-xs text-slate-400 mt-0.5 italic">{r.cm_notes}</p>}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLOUR[r.status]}`}>
+                          {STATUS_LABEL[r.status] || r.status}
+                        </span>
+                        {r.status === 'REJECTED' && (
+                          <button
+                            onClick={() => deleteReport(r.id, r.brand_name_reported)}
+                            disabled={actingOn === r.id}
+                            className="text-xs font-medium text-red-600 hover:text-red-800 disabled:opacity-50">
+                            {actingOn === r.id ? 'Deleting…' : 'Delete'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           )}
         </div>
