@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import SoilNutrientPanel from '@/components/SoilNutrientPanel'
+import FeatureAccessPanel from '@/components/FeatureAccessPanel'
 import api from '@/lib/api'
 import { extractErrorMessage } from '@/lib/errors'
 
@@ -472,6 +473,13 @@ export default function ClientDetailPage() {
       {client.status === 'ACTIVE' && (
         <div className="mb-5">
           <SoilNutrientPanel clientId={clientId as string} />
+        </div>
+      )}
+
+      {/* Feature Access panel — 2026-11-22 Phase 1 (Messaging / Touchpoints) */}
+      {client.status === 'ACTIVE' && (
+        <div className="mb-5">
+          <FeatureAccessPanel clientId={clientId as string} />
         </div>
       )}
 

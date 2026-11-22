@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 import Link from 'next/link'
+import FeatureAccessDashboard from '@/components/FeatureAccessDashboard'
 
 type Client = { status: string }
 type Lang = { status: string }
@@ -60,6 +61,11 @@ export default function Dashboard() {
             </Link>
           ))
         }
+      </div>
+
+      {/* Feature Access overview — 2026-11-22 */}
+      <div className="mb-5">
+        <FeatureAccessDashboard />
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-5">
