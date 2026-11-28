@@ -4,8 +4,12 @@ import { useRouter, useParams } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
 
-interface Profile { id: string; name: string | null; phone: string | null; email: string | null; language_code: string; state: string | null; district: string | null; address: string | null; gps_lat: number | null; gps_lng: number | null }
-interface Subscription { id: string; status: string; reference_number: string | null; crop_start_date: string | null; client_name: string | null; package_name: string | null; crop_cosh_id: string | null }
+// 2026-11-28 — Added *_name fields (resolved server-side from the
+// cosh_id fallbacks) so the header subtitle + subscription-row crop
+// label don't render raw UUIDs. The raw cosh_id fields stay for
+// debuggability and in case a name isn't resolved.
+interface Profile { id: string; name: string | null; phone: string | null; email: string | null; language_code: string; state: string | null; district: string | null; sub_district: string | null; state_name: string | null; district_name: string | null; sub_district_name: string | null; address: string | null; gps_lat: number | null; gps_lng: number | null }
+interface Subscription { id: string; status: string; reference_number: string | null; crop_start_date: string | null; client_name: string | null; package_name: string | null; crop_cosh_id: string | null; crop_name: string | null }
 interface Order { id: string; status: string; date_from: string; date_to: string; dealer_user_id: string | null }
 interface Query { id: string; status: string; title: string; created_at: string }
 interface Case { id: string; category: string; description: string; resolution_status: string; is_escalated: boolean; created_at: string }
@@ -68,7 +72,20 @@ export default function UserContextPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-900">{p.name || 'No name'}</h1>
-            <p className="text-sm text-slate-400">{p.phone}{p.district ? ` · ${p.district}` : ''}{p.state ? `, ${p.state}` : ''}</p>
+            {/* 2026-11-28 — show resolved district/state names (not
+                raw cosh_ids). Falls back to '—' when neither is set
+                instead of leaking the UUID into the subtitle. */}
+            <p className="text-sm text-slate-400">
+              {p.phone}
+              {(p.district_name || p.state_name) && (
+                <>
+                  {' · '}
+                  {p.district_name}
+                  {p.district_name && p.state_name && ', '}
+                  {p.state_name}
+                </>
+              )}
+            </p>
           </div>
           <div className="ml-auto flex gap-2">
             {p.phone && (
@@ -104,7 +121,9 @@ export default function UserContextPage() {
                 <div key={s.id} className="flex items-center justify-between py-1.5 border-b border-slate-50 last:border-0">
                   <div>
                     <p className="text-sm text-slate-700">{s.client_name || '—'}</p>
-                    <p className="text-xs text-slate-400">{s.package_name} · {s.crop_cosh_id}</p>
+                    {/* 2026-11-28 — crop name resolved server-side;
+                        falls back to '—' instead of leaking cosh_id. */}
+                    <p className="text-xs text-slate-400">{s.package_name} · {s.crop_name || '—'}</p>
                     {s.crop_start_date
                       ? <p className="text-xs text-slate-400">Started {new Date(s.crop_start_date).toLocaleDateString()}</p>
                       : <p className="text-xs text-amber-500">⚠ No start date</p>

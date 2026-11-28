@@ -1,5 +1,5 @@
 'use client'
-import { Suspense, useState, useEffect } from 'react'
+import { Suspense, useState, useEffect, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import AdminLayout from '@/components/AdminLayout'
 import api from '@/lib/api'
@@ -8,10 +8,18 @@ interface Alert {
   alert_type: string; subscription_id: string
   farmer_id: string; farmer_name: string | null; farmer_phone: string | null
   farmer_district: string | null; farmer_state: string | null
+  farmer_district_name: string | null; farmer_state_name: string | null
   client_name: string | null; days_pending: number
   overdue_practice: string | null
   alert_receiver_name: string | null; alert_receiver_phone: string | null; alert_receiver_type: string | null
 }
+
+// Cosh India locations shape (from /cosh/locations/india). Used for
+// the cascading state → district picker that replaces the earlier
+// free-text cosh_id inputs.
+interface CoshDistrict { cosh_id: string; name: string | null }
+interface CoshState { cosh_id: string; name: string | null; districts: CoshDistrict[] }
+interface CoshLocations { states: CoshState[] }
 
 // Next.js 16 forbids useSearchParams() at the page-component level
 // during prerender. The hook has to live inside a Suspense boundary
@@ -30,12 +38,22 @@ function AlertQueueContent() {
   const searchParams = useSearchParams()
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(true)
+  const [locations, setLocations] = useState<CoshLocations>({ states: [] })
   const [filters, setFilters] = useState({
     alert_type: searchParams.get('type') || 'ALL',
     state_cosh_id: '',
     district_cosh_id: '',
     days_pending_min: '',
   })
+
+  // Load the Cosh India locations once — same endpoint the CA Portal
+  // uses for its own cascading picker. Returns {states:[{cosh_id,
+  // name, districts:[{cosh_id, name}]}]}.
+  useEffect(() => {
+    api.get<CoshLocations>('/cosh/locations/india')
+      .then(r => setLocations(r.data))
+      .catch(() => {/* leave empty; selects stay empty, filters still work */})
+  }, [])
 
   const load = async () => {
     setLoading(true)
@@ -50,7 +68,16 @@ function AlertQueueContent() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Districts visible in the second dropdown depend on which state
+  // is picked. If no state picked, show no districts (prevents a
+  // huge all-india dropdown that would be unusable).
+  const districtOptions = useMemo(() => {
+    if (!filters.state_cosh_id) return []
+    const st = locations.states.find(s => s.cosh_id === filters.state_cosh_id)
+    return st ? st.districts : []
+  }, [filters.state_cosh_id, locations])
 
   const TYPE_COLOUR: Record<string, string> = {
     START_DATE: 'bg-amber-100 text-amber-700',
@@ -81,19 +108,32 @@ function AlertQueueContent() {
             <option value="INPUT_DUE">Input Due</option>
           </select>
         </div>
+        {/* 2026-11-28 — cascading state → district picker.
+            Was free-text cosh_id inputs ("e.g. state_telangana") which
+            users had no way to know. Picks cascade so changing state
+            resets the district selection. */}
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">State</label>
-          <input value={filters.state_cosh_id}
-            onChange={e => setFilters(f => ({ ...f, state_cosh_id: e.target.value }))}
-            placeholder="e.g. state_telangana"
-            className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none font-mono" />
+          <select value={filters.state_cosh_id}
+            onChange={e => setFilters(f => ({ ...f, state_cosh_id: e.target.value, district_cosh_id: '' }))}
+            className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none min-w-[180px]">
+            <option value="">All states</option>
+            {locations.states.map(s => (
+              <option key={s.cosh_id} value={s.cosh_id}>{s.name || s.cosh_id}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">District</label>
-          <input value={filters.district_cosh_id}
+          <select value={filters.district_cosh_id}
+            disabled={!filters.state_cosh_id}
             onChange={e => setFilters(f => ({ ...f, district_cosh_id: e.target.value }))}
-            placeholder="e.g. dist_warangal"
-            className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none font-mono" />
+            className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none min-w-[180px] disabled:bg-slate-50 disabled:text-slate-400">
+            <option value="">{filters.state_cosh_id ? 'All districts' : 'Pick a state first'}</option>
+            {districtOptions.map(d => (
+              <option key={d.cosh_id} value={d.cosh_id}>{d.name || d.cosh_id}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Min Days Pending</label>
@@ -138,7 +178,13 @@ function AlertQueueContent() {
                     <p className="font-medium text-slate-800">{a.farmer_name || '—'}</p>
                     <a href={`tel:${a.farmer_phone}`} className="text-xs text-blue-600 hover:underline">{a.farmer_phone}</a>
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-500">{a.farmer_district}</td>
+                  {/* 2026-11-28 — render resolved district + state
+                      name from backend. Fallback to raw id only when
+                      the cosh catalog is missing the entry. */}
+                  <td className="px-4 py-3 text-xs text-slate-600">
+                    <p>{a.farmer_district_name || a.farmer_district || '—'}</p>
+                    {a.farmer_state_name && <p className="text-[11px] text-slate-400">{a.farmer_state_name}</p>}
+                  </td>
                   <td className="px-4 py-3 text-xs text-slate-600">{a.client_name}</td>
                   <td className="px-4 py-3">
                     <span className={`text-sm ${urgency(a.days_pending)}`}>{a.days_pending}d</span>
