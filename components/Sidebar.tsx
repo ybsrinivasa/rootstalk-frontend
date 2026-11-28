@@ -1,4 +1,5 @@
 'use client'
+import { useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { logout, getUser } from '@/lib/auth'
@@ -190,6 +191,54 @@ function GroupLabel({ label }: { label: string }) {
   )
 }
 
+// 2026-11-28 — Sidebar nav lives in an overflow-y-auto container so
+// long menus scroll. Without this helper, every route change reset
+// the scroll to top and items deeper in the list (e.g. /rm in the
+// MY WORK group, which sits below PLATFORM + CONTENT + SOIL NUTRIENT
+// — about 15 items up) would be invisible on landing even though
+// the active-item highlight was applied. User-reported as "the
+// highlight moves down, I need to scroll every time". Fix: ref the
+// active Link and scroll it into view on path change. `block:
+// 'nearest'` keeps already-visible items untouched and only scrolls
+// when needed (no jarring motion for top-group items).
+function SidebarNav({
+  path,
+  grouped,
+}: {
+  path: string
+  grouped: { group: string; items: typeof ALL_NAV }[]
+}) {
+  const activeRef = useRef<HTMLAnchorElement | null>(null)
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+  }, [path])
+  return (
+    <nav className="flex-1 overflow-y-auto pb-2">
+      {grouped.map(({ group, items }) => (
+        <div key={group}>
+          <GroupLabel label={group} />
+          {items.map(item => {
+            const active = path === item.href || path.startsWith(item.href + '/')
+            const { Icon } = item
+            return (
+              <Link key={item.href} href={item.href}
+                ref={active ? activeRef : undefined}
+                className={`flex items-center gap-3 mx-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                  active
+                    ? 'bg-white/10 border-l-2 border-blue-400 text-white font-medium pl-[10px]'
+                    : 'text-white/50 hover:text-white hover:bg-white/5'
+                }`}>
+                <Icon />
+                {item.label}
+              </Link>
+            )
+          })}
+        </div>
+      ))}
+    </nav>
+  )
+}
+
 // Backend returns full role names (CONTENT_MANAGER, RELATIONSHIP_MANAGER,
 // BUSINESS_MANAGER); the menu's role tags use short codes. Map them so
 // effectiveRole lines up with the ALL_NAV `roles` arrays.
@@ -262,28 +311,7 @@ export default function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto pb-2">
-        {grouped.map(({ group, items }) => (
-          <div key={group}>
-            <GroupLabel label={group} />
-            {items.map(item => {
-              const active = path === item.href || path.startsWith(item.href + '/')
-              const { Icon } = item
-              return (
-                <Link key={item.href} href={item.href}
-                  className={`flex items-center gap-3 mx-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    active
-                      ? 'bg-white/10 border-l-2 border-blue-400 text-white font-medium pl-[10px]'
-                      : 'text-white/50 hover:text-white hover:bg-white/5'
-                  }`}>
-                  <Icon />
-                  {item.label}
-                </Link>
-              )
-            })}
-          </div>
-        ))}
-      </nav>
+      <SidebarNav path={path} grouped={grouped} />
 
       {/* User footer */}
       <div className="px-4 py-3 border-t border-white/10">
